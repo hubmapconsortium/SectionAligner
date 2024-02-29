@@ -11,7 +11,10 @@ from argparse import ArgumentParser
 # from skimage.filters import threshold_otsu
 # from aicsimageio import AICSImage
 # import pandas as pd
-# import optuna
+import optuna
+import time
+
+CONST_PIXEL_SIZE_FOR_OPERATIONS = 0.5073519424785282 * 10 #microns
 
 def main(
     level: int, 
@@ -39,8 +42,19 @@ def main(
     # scale_factor = 10 #10
     # padding = 20
     # connect = 2
+        
+    # pixel_size = [0.5073519424785282, 0.5073519424785282] #microns
+    if pixel_size[1] == 0.5073519424785282 and pixel_size[0] == 0.5073519424785282:
+        scale_factor_x = CONST_PIXEL_SIZE_FOR_OPERATIONS / pixel_size[0]
+        scale_factor_y = CONST_PIXEL_SIZE_FOR_OPERATIONS / pixel_size[1]
+    else:
+        scale_factor_x = scale_factor
+        scale_factor_y = scale_factor
     ###########################
 
+    print('Starting...Read images')
+    #time the process
+    start = time.time()
     # Load images
     img_list = []
     img_list_sorted =  sorted(img_dir.glob('*.qptiff'))
@@ -52,6 +66,7 @@ def main(
         img_arr.append(img.series[0].levels[level].asarray())
 
     img_2D = sum_channels(img_arr)
+    print('Time to read images:', time.time() - start)
 
     # plot_img_from_list(img_2D)
 
@@ -781,7 +796,7 @@ if __name__ == "__main__":
     # make debug of steps - save images of each step.
     p = ArgumentParser()
     p.add_argument('--level', type=int, default=0, help='Pyrmaid level of the image, default is 0 which is the original image size')
-    p.add_argument('--thresh', type=int, default=None, help='Threshold value for binarization, default is done by otsu')
+    p.add_argument('--thresh', type=int, default=30, help='Threshold value for binarization, default is done by otsu')
     p.add_argument('--kernel_size', type=int, default=0, help='Size of the structuring element used for closing, default is 0')
     p.add_argument('--holes_thresh', type=int, default=300, help='Area threshold for removing small holes, default is 300')
     p.add_argument('--scale_factor', type=int, default=10, help='Scale factor for downsample, default is 10')
