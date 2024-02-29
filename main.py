@@ -7,11 +7,11 @@ import cv2
 from aicsimageio.writers import OmeTiffWriter
 from aicsimageio import types
 import random
-import optuna
 from argparse import ArgumentParser
 # from skimage.filters import threshold_otsu
 # from aicsimageio import AICSImage
 # import pandas as pd
+# import optuna
 
 def main(
     level: int, 
