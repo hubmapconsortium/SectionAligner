@@ -221,22 +221,18 @@ def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
         edge_threshold = params['edge_threshold']
         sigma = params['sigma']
         ratio_threshold = params['ratio_threshold']
+        flann_check = params['flann_check']
+        flann_trees = params['flann_trees']
 
     else:
-        # n_features = 0  # 0 means no limit
-        # n_octave_layers = 3  # Default value
-        # contrast_threshold = 0.03  # Lowering this might result in more features being detected
-        # edge_threshold = 10  # Default value
-        # sigma = 1.6  # Default value2
-        # ratio_threshold = 0.75  # Lowe's ratio test
-
-        #best params from optuna
-        n_features = 600
-        contrast_threshold = 0.07033053754007414
-        edge_threshold = 15.243986448031832
-        sigma = 1.7055546594751954
-        n_octave_layers = 1
-        ratio_threshold = 0.8961605990597056
+        n_features = 0  # 0 means no limit
+        n_octave_layers = 3  # Default value
+        contrast_threshold = 0.05  # Lowering this might result in more features being detected
+        edge_threshold = 10 
+        sigma = 1.6  
+        ratio_threshold = 0.75  # Lowe's ratio test
+        flann_check = 200
+        flann_trees = 20
 
     sift = cv2.SIFT_create(n_features, n_octave_layers, contrast_threshold, edge_threshold, sigma)
 
@@ -253,14 +249,14 @@ def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
     ref_slice = image_4d[reference_z, align_channel].astype(np.uint8)
 
     #otsu filter for threshold
-    _, ref_slice = cv2.threshold(ref_slice, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # _, ref_slice = cv2.threshold(ref_slice, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
     keypoints_ref, descriptors_ref = sift.detectAndCompute(ref_slice, None)
 
     # Initialize FLANN based matcher
     FLANN_INDEX_KDTREE = 1
-    index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-    search_params = dict(checks=50)
+    index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=flann_trees)
+    search_params = dict(checks=flann_check)
     flann = cv2.FlannBasedMatcher(index_params, search_params)
 
     # Initialize an empty array for the aligned z-slices
@@ -278,7 +274,7 @@ def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
             current_slice = image_4d[z, align_channel].astype(np.uint8)
 
             #otsu filter for threshold
-            _, current_slice = cv2.threshold(current_slice, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            # _, current_slice = cv2.threshold(current_slice, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
             keypoints, descriptors = sift.detectAndCompute(current_slice, None)
 
@@ -306,8 +302,8 @@ def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
 
             # Update the keypoints and descriptors for the reference slice as the currrent aligned slice
             # keypoints_ref, descriptors_ref = sift.detectAndCompute(aligned_image_4d[z, align_channel], None)
-            keypoints_ref = keypoints
-            descriptors_ref = descriptors
+            # keypoints_ref = keypoints
+            # descriptors_ref = descriptors
 
         else:
             # Copy the reference slice as-is
@@ -524,15 +520,17 @@ def crop_imgs(imgs, bbox, centroids, sf, padding, filtered_imgs):
             x1, y1, x2, y2 = create_bounding_box(cX, cY, w, h, img, sf, padding)
 
             #use upsample mask on original image
-            upsampled_mask = upsample_image(filtered_imgs[i][0][j], sf)
-            upsampled_mask = (upsampled_mask > 0).astype(np.uint8) #convert to [0, 1]
+            # upsampled_mask = upsample_image(filtered_imgs[i][0][j], sf)
+            # upsampled_mask = (upsampled_mask > 0).astype(np.uint8) #convert to [0, 1]
 
             #apply mask to original image
-            mask_img = img * upsampled_mask
+            # mask_img = img * upsampled_mask
 
             #crop image
-            new_img = mask_img[:, y1:y2, x1:x2]
-            # new_img = img[:, y1:y2, x1:x2]
+            # new_img = mask_img[:, y1:y2, x1:x2]
+            new_img = img[:, y1:y2, x1:x2]
+
+            
 
             
 
