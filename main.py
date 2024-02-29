@@ -317,8 +317,8 @@ def generate_binary_mask(image, threshold=30):
     :param threshold: Threshold value for binarization.
     :return: Binary mask of the image.
     """
-    # _, binary_mask = cv2.threshold(image, threshold, 255, cv2.THRESH_BINARY)
-    _, binary_mask = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    _, binary_mask = cv2.threshold(image, threshold, 255, cv2.THRESH_BINARY)
+    # _, binary_mask = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     return binary_mask
 
 def objective(trial, image_4d):
@@ -518,15 +518,19 @@ def crop_imgs(imgs, bbox, centroids, sf, padding, filtered_imgs):
             x1, y1, x2, y2 = create_bounding_box(cX, cY, w, h, img, sf, padding)
 
             #use upsample mask on original image
-            # upsampled_mask = upsample_image(filtered_imgs[i][0][j], sf)
-            # upsampled_mask = (upsampled_mask > 0).astype(np.uint8) #convert to [0, 1]
+            upsampled_mask = upsample_image(filtered_imgs[i][0][j], sf)
+            upsampled_mask = (upsampled_mask > 0).astype(np.uint8) #convert to [0, 1]
 
-            # #apply mask to original image
-            # mask_img = img * upsampled_mask
+            #apply mask to original image
+            mask_img = img * upsampled_mask
 
             #crop image
-            # new_img = mask_img[:, y1:y2, x1:x2]
-            new_img = img[:, y1:y2, x1:x2]
+            new_img = mask_img[:, y1:y2, x1:x2]
+            # new_img = img[:, y1:y2, x1:x2]
+
+            
+
+
             cropped_imgs.append(new_img)
             # cropped_imgs.append(img[y:y+h, x:x+w])
 
@@ -851,4 +855,5 @@ if __name__ == "__main__":
         output_folder = args.output_folder,
         input_folder = args.input_folder,
         file_basename = args.output_file_basename
+
     )
