@@ -24,14 +24,19 @@ def main(
     scale_factor: int,
     padding: int,
     connect: int, 
-    pixel_size: list
+    pixel_size: list,
+    output_folder: str,
+    input_folder: str,
+    basename: str
 ):
 
     start_begin = time.time()
     # in hive
     # img_dir = Path('raw_data')
     # local
-    img_dir = Path('raw_data/IMGS')
+    # img_dir = Path('raw_data/IMGS')
+
+    img_dir = Path(input_folder)
     with open('raw_data/channelnames.txt', 'r') as file:
         channelnames = [line.strip() for line in file]
 
@@ -164,10 +169,10 @@ def main(
         
     pps = types.PhysicalPixelSizes(X=pixel_size[0], Y=pixel_size[1], Z=2.0)
 
-    for i, img in enumerate(aligned_tissue):
+    for i, img in enumerate(aligned_tissue_list):
         OmeTiffWriter.save(
             img,
-            f"./outputs/aligned_3D_CODEX_59C_ZCYX_Tissue_{i}.ome.tif",
+            f"./{output_folder}/{basename}_{i}.ome.tif",
             dim_order="ZCYX",
             channel_names=channelnames,
             physical_pixel_sizes=pps,
@@ -641,7 +646,7 @@ def compute_bounding_box(imgs):
             # cv2.circle(output_image, (cX, cY), 5, (0, 0, 255), -1)
 
             # Print the centroid coordinates (we'll use the center of the bounding box as the centroid)
-            print("Centroid coordinates: ({}, {})".format(cX, cY))
+            # print("Centroid coordinates: ({}, {})".format(cX, cY))
 
             # bounding_box.append((x_padded, y_padded, w_padded, h_padded))
             bounding_box.append((x, y, w, h))
@@ -824,7 +829,10 @@ if __name__ == "__main__":
     p.add_argument('--padding', type=int, default=20, help='Padding for bounding box, default is 20')
     p.add_argument('--connect', type=int, default=2, help='Connectivity for connected components, default is 2')
     p.add_argument('--pixel_size', type=list, default=[0.5073519424785282, 0.5073519424785282], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
-    
+    p.add_argument('--output_folder', type=str, default='outputs', help='Output folder for saving images, default is outputs')
+    p.add_argument('--input_folder', type=str, default='raw_data', help='Input folder for reading images, default is inputs')
+    p.add_argument('--output_file_basename', type=str, default='aligned_tissue', help='Output file basename, default is aligned_tissue')
+
     args = p.parse_args()
 
     main(
@@ -835,5 +843,8 @@ if __name__ == "__main__":
         scale_factor = args.scale_factor,
         padding = args.padding,
         connect = args.connect,
-        pixel_size = args.pixel_size
+        pixel_size = args.pixel_size,
+        output_folder = args.output_folder,
+        input_folder = args.input_folder,
+        output_file_basename = args.output_file_basename
     )
