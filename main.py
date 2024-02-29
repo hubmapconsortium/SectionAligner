@@ -297,8 +297,11 @@ def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
 
             # Apply the transformation to align the z-slice
             aligned_image_4d[z] = aligned_slice.transpose(2, 0, 1)
+
             # Update the keypoints and descriptors for the reference slice as the currrent aligned slice
-            keypoints_ref, descriptors_ref = sift.detectAndCompute(aligned_image_4d[z, align_channel], None)
+            # keypoints_ref, descriptors_ref = sift.detectAndCompute(aligned_image_4d[z, align_channel], None)
+            keypoints_ref = keypoints
+            descriptors_ref = descriptors
 
         else:
             # Copy the reference slice as-is
@@ -425,7 +428,7 @@ def stack_images(list_of_lists_of_images):
         
     # Stack images of the same index from each inner list
     # stacked_images = [np.stack([inner_list[i] for inner_list in list_of_lists_of_images], axis=0) for i in range(num_images)]
-    stacked_images = [np.stack(tissue_imgs[i], axis=0) for i in range(num_images-3)]
+    stacked_images = [np.stack(tissue_imgs[i], axis=0) for i in range(num_images)]
 
     return stacked_images
 
@@ -515,14 +518,15 @@ def crop_imgs(imgs, bbox, centroids, sf, padding, filtered_imgs):
             x1, y1, x2, y2 = create_bounding_box(cX, cY, w, h, img, sf, padding)
 
             #use upsample mask on original image
-            upsampled_mask = upsample_image(filtered_imgs[i][0][j], sf)
-            upsampled_mask = (upsampled_mask > 0).astype(np.uint8) #convert to [0, 1]
+            # upsampled_mask = upsample_image(filtered_imgs[i][0][j], sf)
+            # upsampled_mask = (upsampled_mask > 0).astype(np.uint8) #convert to [0, 1]
 
-            #apply mask to original image
-            mask_img = img * upsampled_mask
+            # #apply mask to original image
+            # mask_img = img * upsampled_mask
 
             #crop image
-            new_img = mask_img[:, y1:y2, x1:x2]
+            # new_img = mask_img[:, y1:y2, x1:x2]
+            new_img = img[:, y1:y2, x1:x2]
             cropped_imgs.append(new_img)
             # cropped_imgs.append(img[y:y+h, x:x+w])
 
