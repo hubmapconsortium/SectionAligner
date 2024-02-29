@@ -133,7 +133,7 @@ def main(
 
 
     # crop images
-    cropped_imgs = crop_imgs(img_arr[:-2], tissue_bbox, centroid_slices, scale_factor, padding, filtered_imgs)
+    cropped_imgs = crop_imgs(img_arr, tissue_bbox, centroid_slices, scale_factor, padding, filtered_imgs)
     # cropped_imgs = crop_imgs([img_arr[4]], tissue_bbox, [centroid_slices[4]], scale_factor, padding, [filtered_imgs[4]])
     
     # stack images
