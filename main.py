@@ -227,7 +227,7 @@ def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
         # n_octave_layers = 3  # Default value
         # contrast_threshold = 0.03  # Lowering this might result in more features being detected
         # edge_threshold = 10  # Default value
-        # sigma = 1.6  # Default value
+        # sigma = 1.6  # Default value2
         # ratio_threshold = 0.75  # Lowe's ratio test
 
         #best params from optuna
@@ -252,6 +252,9 @@ def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
     #one channel
     ref_slice = image_4d[reference_z, align_channel].astype(np.uint8)
 
+    #otsu filter for threshold
+    _, ref_slice = cv2.threshold(ref_slice, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
     keypoints_ref, descriptors_ref = sift.detectAndCompute(ref_slice, None)
 
     # Initialize FLANN based matcher
@@ -273,6 +276,9 @@ def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
             # current_slice = np.sum(image_4d[z].transpose(1, 2, 0), axis=2)
 
             current_slice = image_4d[z, align_channel].astype(np.uint8)
+
+            #otsu filter for threshold
+            _, current_slice = cv2.threshold(current_slice, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
             keypoints, descriptors = sift.detectAndCompute(current_slice, None)
 
