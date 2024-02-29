@@ -27,7 +27,7 @@ def main(
     pixel_size: list,
     output_folder: str,
     input_folder: str,
-    basename: str
+    file_basename: str
 ):
 
     start_begin = time.time()
@@ -172,7 +172,7 @@ def main(
     for i, img in enumerate(aligned_tissue_list):
         OmeTiffWriter.save(
             img,
-            f"./{output_folder}/{basename}_{i}.ome.tif",
+            f"./{output_folder}/{file_basename}_{i}.ome.tif",
             dim_order="ZCYX",
             channel_names=channelnames,
             physical_pixel_sizes=pps,
@@ -846,5 +846,5 @@ if __name__ == "__main__":
         pixel_size = args.pixel_size,
         output_folder = args.output_folder,
         input_folder = args.input_folder,
-        output_file_basename = args.output_file_basename
+        file_basename = args.output_file_basename
     )
