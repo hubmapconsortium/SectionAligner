@@ -20,9 +20,13 @@ def main(
     holes_thresh: int,
     scale_factor: int,
     padding: int,
-    connect: int
+    connect: int, 
+    pixel_size: list
 ):
 
+    # in hive
+    # img_dir = Path('raw_data')
+    # local
     img_dir = Path('raw_data/IMGS')
     with open('raw_data/channelnames.txt', 'r') as file:
         channelnames = [line.strip() for line in file]
@@ -52,15 +56,16 @@ def main(
     # plot_img_from_list(img_2D)
 
     # otsu for threshold for automation
-    if 
-    # thresh = threshold_otsu(img_2D[0])
+    if thresh == None:
+        thresh = [cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[0] for img in img_2D]
+    else:
+        thresh = [thresh for _ in img_2D]
 
     #downsample images
     img_2D_downsample = [transform.downscale_local_mean(img, (scale_factor,scale_factor)) for img in img_2D]
 
-    # Thresholding by otsu
-    # thresh_imgs = [threshold_otsu(img) for img in img_2D_downsample]
-    # binary_imgs = [img > thresh_imgs[i] for i, img in enumerate(img_2D_downsample)]
+
+    binary_imgs = [img > thresh[i] for i, img in enumerate(img_2D_downsample)]
 
     # convert to binary image by thresholding > 0 
     binary_imgs = [img > thresh for img in img_2D_downsample]
@@ -782,6 +787,7 @@ if __name__ == "__main__":
     p.add_argument('--scale_factor', type=int, default=10, help='Scale factor for downsample, default is 10')
     p.add_argument('--padding', type=int, default=20, help='Padding for bounding box, default is 20')
     p.add_argument('--connect', type=int, default=2, help='Connectivity for connected components, default is 2')
+    p.add_argument('--pixel_size', type=list, default=[0.5073519424785282, 0.5073519424785282], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
     
     args = p.parse_args()
 
@@ -792,5 +798,6 @@ if __name__ == "__main__":
         holes_thresh = args.holes_thresh,
         scale_factor = args.scale_factor,
         padding = args.padding,
-        connect = args.connect
+        connect = args.connect,
+        pixel_size = args.pixel_size
     )
