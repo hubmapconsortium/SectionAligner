@@ -2,29 +2,39 @@ import tifffile as tiff
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
-import pandas as pd
-from skimage.filters import threshold_otsu
-from skimage import morphology, measure, transform
+from skimage import morphology, transform
 import cv2
-from aicsimageio import AICSImage
 from aicsimageio.writers import OmeTiffWriter
 from aicsimageio import types
 import random
+import optuna
+from argparse import ArgumentParser
+# from skimage.filters import threshold_otsu
+# from aicsimageio import AICSImage
+# import pandas as pd
 
-def main():
+def main(
+    level: int, 
+    thresh: int,
+    kernel_size: int,
+    holes_thresh: int,
+    scale_factor: int,
+    padding: int,
+    connect: int
+):
 
     img_dir = Path('raw_data/IMGS')
     with open('raw_data/channelnames.txt', 'r') as file:
         channelnames = [line.strip() for line in file]
 
     #### OPTION PARAMETERS ####
-    level = 3 #downsample level - 3
-    thresh = 30 # needs to be percentage of max value 
-    kernel_size = 0 # 0
-    holes_thresh = 300 #300
-    scale_factor = 10 #10
-    padding = 10
-    connect = 2
+    # level = 3 #downsample level - 3
+    # thresh = 30 # needs to be percentage of max value 
+    # kernel_size = 0 # 0
+    # holes_thresh = 300 #300
+    # scale_factor = 10 #10
+    # padding = 20
+    # connect = 2
     ###########################
 
     # Load images
@@ -42,6 +52,7 @@ def main():
     # plot_img_from_list(img_2D)
 
     # otsu for threshold for automation
+    if 
     # thresh = threshold_otsu(img_2D[0])
 
     #downsample images
@@ -84,15 +95,28 @@ def main():
 
 
     # crop images
-    cropped_imgs = crop_imgs(img_arr[:-1], tissue_bbox, centroid_slices, scale_factor, padding, filtered_imgs)
+    cropped_imgs = crop_imgs(img_arr, tissue_bbox, centroid_slices, scale_factor, padding, filtered_imgs)
+    # cropped_imgs = crop_imgs([img_arr[4]], tissue_bbox, [centroid_slices[4]], scale_factor, padding, [filtered_imgs[4]])
     
-
     # stack images
     stacked_imgs = stack_images(cropped_imgs)
 
-    aligned_tissue = []
+    aligned_tissue_list = []
     for img in stacked_imgs:
-        aligned_tissue.append(align_z_slices(img))
+
+        # Normal alignment#
+        aligned_tissue = align_z_slices(img)
+        dice_list, d_avg = calculate_dice_coefficients(aligned_tissue)
+        print(f"Average Dice coefficient: {d_avg}")
+        plot_stack(aligned_tissue)
+
+        aligned_tissue_list.append(aligned_tissue)
+
+        # OPTUNA - hyperparameter tuning
+        # optimize_sift_parameters(img)
+        
+
+
         
     # save stack images
         
@@ -133,7 +157,7 @@ def main():
     print('DONE')
 
 
-def align_z_slices(image_4d, reference_z=0, align_channel=0):
+def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
     """
     Align all z-slices in a 4D image array to a reference z-slice.
 
@@ -143,18 +167,34 @@ def align_z_slices(image_4d, reference_z=0, align_channel=0):
     """
     # Initialize SIFT
     # Initialize SIFT with adjusted parameters
-    n_features = 0  # 0 means no limit
-    n_octave_layers = 3  # Default value
-    contrast_threshold = 0.03  # Lowering this might result in more features being detected
-    edge_threshold = 10  # Default value
-    sigma = 1.6  # Default value
+
+    if params:
+        n_features = params['n_features']
+        n_octave_layers = params['n_octave_layers']
+        contrast_threshold = params['contrast_threshold']
+        edge_threshold = params['edge_threshold']
+        sigma = params['sigma']
+        ratio_threshold = params['ratio_threshold']
+
+    else:
+        # n_features = 0  # 0 means no limit
+        # n_octave_layers = 3  # Default value
+        # contrast_threshold = 0.03  # Lowering this might result in more features being detected
+        # edge_threshold = 10  # Default value
+        # sigma = 1.6  # Default value
+        # ratio_threshold = 0.75  # Lowe's ratio test
+
+        #best params from optuna
+        n_features = 600
+        contrast_threshold = 0.07033053754007414
+        edge_threshold = 15.243986448031832
+        sigma = 1.7055546594751954
+        n_octave_layers = 1
+        ratio_threshold = 0.8961605990597056
 
     sift = cv2.SIFT_create(n_features, n_octave_layers, contrast_threshold, edge_threshold, sigma)
 
     # sift = cv2.SIFT_create()
-
-    ratio_threshold = 0.75  # Increased from 0.75 to 0.8
-
     # Convert the reference z-slice to grayscale for feature detection
     # ref_slice = cv2.cvtColor(image_4d[reference_z].transpose(1, 2, 0), cv2.COLOR_BGR2GRAY)
 
@@ -200,16 +240,121 @@ def align_z_slices(image_4d, reference_z=0, align_channel=0):
             # Find homography matrix
             src_pts = np.float32([keypoints[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
             dst_pts = np.float32([keypoints_ref[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-            M, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+
+            try: 
+                M, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+                aligned_slice = cv2.warpPerspective(image_4d[z].transpose(1, 2, 0), M, (image_4d.shape[3], image_4d.shape[2]))
+            except Exception as e:
+                print(e)
+                return None
+                
 
             # Apply the transformation to align the z-slice
-            aligned_slice = cv2.warpPerspective(image_4d[z].transpose(1, 2, 0), M, (image_4d.shape[3], image_4d.shape[2]))
             aligned_image_4d[z] = aligned_slice.transpose(2, 0, 1)
+            # Update the keypoints and descriptors for the reference slice as the currrent aligned slice
+            keypoints_ref, descriptors_ref = sift.detectAndCompute(aligned_image_4d[z, align_channel], None)
+
         else:
             # Copy the reference slice as-is
             aligned_image_4d[z] = image_4d[z]
 
     return aligned_image_4d
+
+def generate_binary_mask(image):
+    """
+    Convert an image to a binary mask based on a threshold.
+    
+    :param image: Input image (2D array).
+    :param threshold: Threshold value for binarization.
+    :return: Binary mask of the image.
+    """
+    # _, binary_mask = cv2.threshold(image, threshold, 255, cv2.THRESH_BINARY)
+    _, binary_mask = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    return binary_mask
+
+def objective(trial, image_4d):
+    # Define the range of values for each parameter you want to optimize
+    n_features = trial.suggest_int('n_features', 0, 1000)
+    contrast_threshold = trial.suggest_float('contrast_threshold', 0.01, 0.1)
+    edge_threshold = trial.suggest_float('edge_threshold', 10, 20)
+    sigma = trial.suggest_float('sigma', 1.0, 2.0)
+    n_octave_layers = trial.suggest_int('n_octave_layers', 1, 10)
+    ratio_threshold = trial.suggest_float('ratio_threshold', 0.5, 0.9)
+
+    #put parameters in a dictionary
+    params = {
+        'n_features': n_features,
+        'n_octave_layers': n_octave_layers,
+        'contrast_threshold': contrast_threshold,
+        'edge_threshold': edge_threshold,
+        'sigma': sigma,
+        'ratio_threshold': ratio_threshold
+    }
+
+    # Initialize SIFT with suggested parameters
+    # sift = cv2.SIFT_create(nfeatures=n_features, contrastThreshold=contrast_threshold, edgeThreshold=edge_threshold, sigma=sigma)
+
+    # Perform alignment using the current SIFT configuration
+    # Note: You'll need to modify your alignment function to accept the `sift` parameter
+    aligned_image_4d = align_z_slices(image_4d, params=params)
+    
+    # Evaluate alignment quality
+    _, average_dice = calculate_dice_coefficients(aligned_image_4d)
+    
+    # Since Optuna minimizes the objective, return a negative value of the metric if higher is better
+    return average_dice
+
+# Example usage
+def optimize_sift_parameters(image_4d):
+    study = optuna.create_study(direction='maximize')
+    study.optimize(lambda trial: objective(trial, image_4d), n_trials=100)  # Adjust n_trials to your preference
+
+    print('Number of finished trials:', len(study.trials))
+    print('Best trial:', study.best_trial.params)
+
+def calculate_dice_coefficients(aligned_image_4d, align_channel=0, threshold=127):
+    """
+    Calculate the Dice coefficient between consecutive slices in a 4D image array
+    after converting each slice into a binary image.
+    
+    :param aligned_image_4d: 4D image array with shape (z-slice, channels, height, width).
+    :param align_channel: The channel index to use for creating binary images.
+    :param threshold: Threshold value for binarization.
+    :return: List of Dice coefficients between consecutive slices.
+    """
+
+    if aligned_image_4d is None:
+        return [], 0
+
+    dice_coefficients = []
+    
+    # Convert the first slice to a binary mask and store as the previous slice's mask
+    prev_slice_mask = generate_binary_mask(aligned_image_4d[0, align_channel])
+    
+    for z in range(1, aligned_image_4d.shape[0]):
+        # Convert the current slice to a binary mask
+        current_slice_mask = generate_binary_mask(aligned_image_4d[z, align_channel])
+        
+        # Calculate Dice coefficient
+        intersection = np.logical_and(prev_slice_mask, current_slice_mask)
+        dice = 2. * intersection.sum() / (prev_slice_mask.sum() + current_slice_mask.sum())
+        
+        dice_coefficients.append(dice)
+        
+        # Update the previous slice mask
+        prev_slice_mask = current_slice_mask
+
+    average_dice = np.mean(dice_coefficients) if dice_coefficients else 0
+    
+    return dice_coefficients, average_dice
+
+def plot_stack(image_4d, align_channel=0):
+    fig, axes = plt.subplots(1, image_4d.shape[0], figsize=(15, 5))
+    for i, ax in enumerate(axes):
+        ax.imshow(image_4d[i, align_channel], cmap='gray')
+        ax.set_title(f'Slice {i+1}')
+    plt.tight_layout()
+    plt.show()
 
 def convert_to_grayscale_sum(slice_img):
     # Sum the channels
@@ -629,5 +774,23 @@ if __name__ == "__main__":
     # each piece as seperate files and upsampled and downsampled versions
 
     # make debug of steps - save images of each step.
+    p = ArgumentParser()
+    p.add_argument('--level', type=int, default=0, help='Pyrmaid level of the image, default is 0 which is the original image size')
+    p.add_argument('--thresh', type=int, default=None, help='Threshold value for binarization, default is done by otsu')
+    p.add_argument('--kernel_size', type=int, default=0, help='Size of the structuring element used for closing, default is 0')
+    p.add_argument('--holes_thresh', type=int, default=300, help='Area threshold for removing small holes, default is 300')
+    p.add_argument('--scale_factor', type=int, default=10, help='Scale factor for downsample, default is 10')
+    p.add_argument('--padding', type=int, default=20, help='Padding for bounding box, default is 20')
+    p.add_argument('--connect', type=int, default=2, help='Connectivity for connected components, default is 2')
+    
+    args = p.parse_args()
 
-    main()
+    main(
+        level = args.level,
+        thresh = args.thresh,
+        kernel_size = args.kernel_size,
+        holes_thresh = args.holes_thresh,
+        scale_factor = args.scale_factor,
+        padding = args.padding,
+        connect = args.connect
+    )
