@@ -27,6 +27,7 @@ def main(
     pixel_size: list
 ):
 
+    start_begin = time.time()
     # in hive
     # img_dir = Path('raw_data')
     # local
@@ -66,10 +67,13 @@ def main(
         img_arr.append(img.series[0].levels[level].asarray())
 
     img_2D = sum_channels(img_arr)
-    print('Time to read images:', time.time() - start)
+    print('Time to read images + Summing all channels:', time.time() - start)
 
     # plot_img_from_list(img_2D)
 
+    print('Preprocessing images...Thresholding, Downsample, Closing, Filling Holes, Erosion, Dilation, Connected Components')
+    # time the process
+    start = time.time()
     # otsu for threshold for automation
     if thresh == None:
         thresh = [cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[0] for img in img_2D]
@@ -83,7 +87,7 @@ def main(
     binary_imgs = [img > thresh[i] for i, img in enumerate(img_2D_downsample)]
 
     # convert to binary image by thresholding > 0 
-    binary_imgs = [img > thresh for img in img_2D_downsample]
+    # binary_imgs = [img > thresh for img in img_2D_downsample]
     binary_imgs = [(img * 255).astype(np.uint8) for img in binary_imgs]
 
     # plot_img_from_list(binary_imgs)
@@ -101,7 +105,13 @@ def main(
 
     connected_comp_imgs = [cv2.connectedComponentsWithStats(img, connect, cv2.CV_32S) for img in dilated_imgs]
 
+    print('Time to Preprocess images:', time.time() - start)
+
+    print('Detecting tissues...')
+    # time the process
+    start = time.time()
     filtered_imgs = [detect_tissues(img) for img in connected_comp_imgs]
+    print('Time to Detect tissues:', time.time() - start)
 
     ### COLOR LABEL IMAGES ###
     # filtered_labels = [detect_tissues(img)[1] for img in connected_comp_imgs]
@@ -110,16 +120,25 @@ def main(
 
     assert_same_length(filtered_imgs)
 
+    print('Cropping images and stack...')
+    # time the process
+    start = time.time()
     # find biggest bounding box and mask
     tissue_bbox, centroid_slices, bbox_slices = find_biggest_bound_box(filtered_imgs)
 
 
     # crop images
-    cropped_imgs = crop_imgs(img_arr, tissue_bbox, centroid_slices, scale_factor, padding, filtered_imgs)
+    cropped_imgs = crop_imgs(img_arr[:-2], tissue_bbox, centroid_slices, scale_factor, padding, filtered_imgs)
     # cropped_imgs = crop_imgs([img_arr[4]], tissue_bbox, [centroid_slices[4]], scale_factor, padding, [filtered_imgs[4]])
     
     # stack images
     stacked_imgs = stack_images(cropped_imgs)
+    print('Time to Crop images and stack:', time.time() - start)
+
+
+    print('Aligning images...')
+    # time the process
+    start = time.time()
 
     aligned_tissue_list = []
     for img in stacked_imgs:
@@ -134,13 +153,16 @@ def main(
 
         # OPTUNA - hyperparameter tuning
         # optimize_sift_parameters(img)
-        
+    
+    print('Time to Align images:', time.time() - start)
 
 
-        
+    print('Saving images...')
+    # time the process
+    start = time.time()
     # save stack images
         
-    pps = types.PhysicalPixelSizes(X=2.0, Y=2.0, Z=2.0)
+    pps = types.PhysicalPixelSizes(X=pixel_size[0], Y=pixel_size[1], Z=2.0)
 
     for i, img in enumerate(aligned_tissue):
         OmeTiffWriter.save(
@@ -150,6 +172,9 @@ def main(
             channel_names=channelnames,
             physical_pixel_sizes=pps,
         )
+
+    print('Time to Save images:', time.time() - start)
+    print('Total time:', time.time() - start_begin)
 
 
 
@@ -171,10 +196,6 @@ def main(
 #         channel_names=channelnames,
 #         physical_pixel_sizes=pps,
 # )
-    
-
-    
-    print('DONE')
 
 
 def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
@@ -280,7 +301,7 @@ def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
 
     return aligned_image_4d
 
-def generate_binary_mask(image):
+def generate_binary_mask(image, threshold=30):
     """
     Convert an image to a binary mask based on a threshold.
     
@@ -332,7 +353,7 @@ def optimize_sift_parameters(image_4d):
     print('Number of finished trials:', len(study.trials))
     print('Best trial:', study.best_trial.params)
 
-def calculate_dice_coefficients(aligned_image_4d, align_channel=0, threshold=127):
+def calculate_dice_coefficients(aligned_image_4d, align_channel=0, threshold=30):
     """
     Calculate the Dice coefficient between consecutive slices in a 4D image array
     after converting each slice into a binary image.
@@ -795,7 +816,7 @@ if __name__ == "__main__":
 
     # make debug of steps - save images of each step.
     p = ArgumentParser()
-    p.add_argument('--level', type=int, default=0, help='Pyrmaid level of the image, default is 0 which is the original image size')
+    p.add_argument('--level', type=int, default=3, help='Pyrmaid level of the image, default is 0 which is the original image size')
     p.add_argument('--thresh', type=int, default=30, help='Threshold value for binarization, default is done by otsu')
     p.add_argument('--kernel_size', type=int, default=0, help='Size of the structuring element used for closing, default is 0')
     p.add_argument('--holes_thresh', type=int, default=300, help='Area threshold for removing small holes, default is 300')
