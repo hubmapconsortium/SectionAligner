@@ -88,7 +88,7 @@ def main(
         thresh = [thresh for _ in img_2D]
 
     #downsample images
-    img_2D_downsample = [transform.downscale_local_mean(img, (scale_factor,scale_factor)) for img in img_2D]
+    # img_2D_downsample = [transform.downscale_local_mean(img, (scale_factor,scale_factor)) for img in img_2D]
 
 
     binary_imgs = [img > thresh[i] for i, img in enumerate(img_2D_downsample)]
@@ -249,6 +249,7 @@ def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
 
     #one channel
     ref_slice = image_4d[reference_z, align_channel].astype(np.uint8)
+    binary_ref = generate_binary_mask(ref_slice)
 
     #otsu filter for threshold
     # _, ref_slice = cv2.threshold(ref_slice, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
@@ -307,6 +308,14 @@ def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
             # keypoints_ref = keypoints
             # descriptors_ref = descriptors
 
+            #check dice coeff against ref   
+            binary_slice = generate_binary_mask(aligned_image_4d[z, align_channel])
+            intersection = np.logical_and(binary_ref, binary_slice)
+            dice = 2. * intersection.sum() / (binary_ref.sum() + binary_slice.sum())
+            print(f"For reference slice {reference_z} and current slice {z} the dice coeff: {dice}")
+            
+
+
         else:
             # Copy the reference slice as-is
             aligned_image_4d[z] = image_4d[z]
@@ -321,8 +330,8 @@ def generate_binary_mask(image, threshold=30):
     :param threshold: Threshold value for binarization.
     :return: Binary mask of the image.
     """
-    _, binary_mask = cv2.threshold(image, threshold, 255, cv2.THRESH_BINARY)
-    # _, binary_mask = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # _, binary_mask = cv2.threshold(image, threshold, 255, cv2.THRESH_BINARY)
+    _, binary_mask = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     return binary_mask
 
 def objective(trial, image_4d):
@@ -855,14 +864,8 @@ def save_arrays_as_images(arrays, use_colormap=False, output_folder='figures', f
 
 if __name__ == "__main__":
 
-    # optional parameteres - otsu and threshold of max (percentage)
-    # downsample parameter 
-
-    # each piece as seperate files and upsampled and downsampled versions
-
-    # make debug of steps - save images of each step.
     p = ArgumentParser()
-    p.add_argument('--level', type=int, default=3, help='Pyrmaid level of the image, default is 0 which is the original image size')
+    p.add_argument('--level', type=int, default=0, help='Pyrmaid level of the image, default is 0 which is the original image size')
     p.add_argument('--thresh', type=int, default=30, help='Threshold value for binarization, default is done by otsu')
     p.add_argument('--kernel_size', type=int, default=0, help='Size of the structuring element used for closing, default is 0')
     p.add_argument('--holes_thresh', type=int, default=300, help='Area threshold for removing small holes, default is 300')
