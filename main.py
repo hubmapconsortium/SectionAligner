@@ -36,7 +36,7 @@ def main(
     # in hive
     # img_dir = Path('raw_data')
     # local
-    img_dir = Path('raw_data/IMGS')
+    # img_dir = Path('raw_data/IMGS')
 
 
     with open('raw_data/channelnames.txt', 'r') as file:
