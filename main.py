@@ -31,12 +31,14 @@ def main(
 ):
 
     start_begin = time.time()
+    img_dir = Path(input_folder)
+
     # in hive
     # img_dir = Path('raw_data')
     # local
-    # img_dir = Path('raw_data/IMGS')
+    img_dir = Path('raw_data/IMGS')
 
-    img_dir = Path(input_folder)
+
     with open('raw_data/channelnames.txt', 'r') as file:
         channelnames = [line.strip() for line in file]
 
@@ -129,11 +131,11 @@ def main(
     # time the process
     start = time.time()
     # find biggest bounding box and mask
-    tissue_bbox, centroid_slices, bbox_slices = find_biggest_bound_box(filtered_imgs)
+    tissue_bbox, centroid_slices, bbox_slices, ref_slices = find_biggest_bound_box(filtered_imgs)
 
 
     # crop images
-    cropped_imgs = crop_imgs(img_arr, tissue_bbox, centroid_slices, scale_factor, padding, filtered_imgs)
+    cropped_imgs = crop_imgs(img_arr, tissue_bbox, centroid_slices, scale_factor, padding, filtered_imgs, thresh)
     # cropped_imgs = crop_imgs([img_arr[4]], tissue_bbox, [centroid_slices[4]], scale_factor, padding, [filtered_imgs[4]])
     
     # stack images
@@ -146,10 +148,10 @@ def main(
     start = time.time()
 
     aligned_tissue_list = []
-    for img in stacked_imgs:
+    for i, img in enumerate(stacked_imgs):
 
         # Normal alignment#
-        aligned_tissue = align_z_slices(img)
+        aligned_tissue = align_z_slices(img, ref_slices[i])
         dice_list, d_avg = calculate_dice_coefficients(aligned_tissue)
         print(f"Average Dice coefficient: {d_avg}")
         plot_stack(aligned_tissue)
@@ -473,7 +475,7 @@ def find_max_dimensions(images):
     return max_width, max_height
 
 
-def close_blob(binary_image, kernel_size=20):
+def close_blob(binary_image, kernel_size=10):
     """
     Close holes and connect components in a binary image.
 
@@ -507,7 +509,7 @@ def upsample_image(image, upsample_factor):
 
     return upsampled_image
 
-def crop_imgs(imgs, bbox, centroids, sf, padding, filtered_imgs):
+def crop_imgs(imgs, bbox, centroids, sf, padding, filtered_imgs, thresh):
     
     cropped_slices = []
 
@@ -519,18 +521,41 @@ def crop_imgs(imgs, bbox, centroids, sf, padding, filtered_imgs):
             # x, y, _, _ = bbox_slices[i][j]
             x1, y1, x2, y2 = create_bounding_box(cX, cY, w, h, img, sf, padding)
 
+
+            #close blob of filtered image
+            mask = close_blob(filtered_imgs[i][0][j], kernel_size=25)
+            #dilate filtered image
+            mask = morphological_operation(mask, kernel_size=10, operation='dilation')
+
             #use upsample mask on original image
-            # upsampled_mask = upsample_image(filtered_imgs[i][0][j], sf)
-            # upsampled_mask = (upsampled_mask > 0).astype(np.uint8) #convert to [0, 1]
+            upsampled_mask = upsample_image(mask, sf)
+            upsampled_mask = (upsampled_mask > 0).astype(np.uint8) #convert to [0, 1]
 
             #apply mask to original image
-            # mask_img = img * upsampled_mask
+            mask_img = img * upsampled_mask
 
             #crop image
-            # new_img = mask_img[:, y1:y2, x1:x2]
-            new_img = img[:, y1:y2, x1:x2]
+            new_img = mask_img[:, y1:y2, x1:x2]
+            # new_img = img[:, y1:y2, x1:x2]
+            # binary_img = new_img.copy()
+            # binary_img = np.sum(binary_img, axis=0)
 
-            
+            # #normalize image
+            # binary_img = cv2.normalize(binary_img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+            # #threshold image
+            # _, binary_img = cv2.threshold(binary_img, 1, 255, cv2.THRESH_BINARY)
+
+            # #close blob
+            # binary_img = close_blob(binary_img, kernel_size=50)
+
+            # #find connected components
+            # cc_img = cv2.connectedComponentsWithStats(binary_img, 2, cv2.CV_32S)
+
+            #get bounding box of largest connected component
+
+
+
 
             
 
@@ -581,12 +606,14 @@ def find_biggest_bound_box(slice_imgs):
     biggest_bounding_boxes = []
     # centroid_of_biggest = []
     biggest_mask = []
+    slice_list = []
 
     # Iterate through each index of bounding boxes across slices
     for i in range(max_bounding_boxes):
         max_area = 0
         # biggest_bbox = None
         # biggest_centroid = None
+        best_slice = 0
 
         # Iterate through each slice
         for slice_index in range(len(slice_imgs)):
@@ -601,6 +628,7 @@ def find_biggest_bound_box(slice_imgs):
 
                     # best_mask = slice_imgs[slice_index][0][i]
                     # biggest_centroid = centroids_slices[slice_index][i]
+                    best_slice = slice_index
 
                     #close blob
                     # best_mask = close_blob(best_mask)
@@ -608,11 +636,12 @@ def find_biggest_bound_box(slice_imgs):
         biggest_bounding_boxes.append((w_best, h_best))
         # centroid_of_biggest.append(biggest_centroid)
         # biggest_mask.append(best_mask)
+        slice_list.append(best_slice)
 
         # d[i] = biggest_bbox
     
 
-    return biggest_bounding_boxes, centroids_slices, bounding_box_slices
+    return biggest_bounding_boxes, centroids_slices, bounding_box_slices, slice_list
 
 
 def assert_same_length(list_of_lists):
