@@ -172,7 +172,7 @@ def main(
         summed_channels = np.sum(aligned_tissue, axis=1).astype(np.uint8)
         OmeTiffWriter.save(
             summed_channels,
-            f"./{output_folder}/{file_basename}_{i}_sumChannels.ome.tif",
+            f"{output_folder}/{file_basename}_{i}_sumChannels.ome.tif",
             dim_order="ZYX",
             physical_pixel_sizes=pps,
         )
@@ -193,7 +193,7 @@ def main(
     for i, img in enumerate(aligned_tissue_list):
         OmeTiffWriter.save(
             img,
-            f"./{output_folder}/{file_basename}_{i}.ome.tif",
+            f"{output_folder}/{file_basename}_{i}.ome.tif",
             dim_order="ZCYX",
             channel_names=channelnames,
             physical_pixel_sizes=pps,
@@ -948,7 +948,7 @@ if __name__ == "__main__":
     p.add_argument('--padding', type=int, default=20, help='Padding for bounding box, default is 20')
     p.add_argument('--connect', type=int, default=2, help='Connectivity for connected components, default is 2')
     p.add_argument('--pixel_size', type=list, default=[0.5073519424785282, 0.5073519424785282], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
-    p.add_argument('--output_folder', type=str, default='outputs', help='Output folder for saving images, default is outputs')
+    p.add_argument('--output_folder', type=str, default='./outputs', help='Output folder for saving images, default is outputs')
     p.add_argument('--input_folder', type=str, default='raw_data', help='Input folder for reading images, default is inputs')
     p.add_argument('--output_file_basename', type=str, default='aligned_tissue', help='Output file basename, default is aligned_tissue')
     p.add_argument('--align_upsample_factor', type=int, default=2, help='Upsample factor for aligning images, default is 2')
