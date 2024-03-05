@@ -169,12 +169,11 @@ def main(
         # plot_stack(aligned_tissue)
 
         #save aligned tissue
-        summed_channels = np.sum(aligned_tissue, axis=1)
+        summed_channels = np.sum(aligned_tissue, axis=1).astype(np.uint8)
         OmeTiffWriter.save(
             summed_channels,
             f"./{output_folder}/{file_basename}_{i}_sumChannels.ome.tif",
             dim_order="ZYX",
-            channel_names=channelnames,
             physical_pixel_sizes=pps,
         )
 
