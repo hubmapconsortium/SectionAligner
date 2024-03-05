@@ -603,12 +603,18 @@ def crop_imgs(imgs, bbox, centroids, padding, filtered_imgs, upsample_factor, sf
             upsampled_mask = upsample_image(mask, sfx, sfy)
             upsampled_mask = (upsampled_mask > 0).astype(np.uint8) #convert to [0, 1]
 
-            #apply mask to original image
-            mask_img = img * upsampled_mask
-            # mask_img = img * mask
+            #crop image and mask first to save memory
+            img = img[:, y1:y2, x1:x2]
+            upsampled_mask = upsampled_mask[y1:y2, x1:x2]
 
+            #apply mask to original image
+            # mask_img = img * upsampled_mask
+            # mask_img = img * mask
+            new_img = img * upsampled_mask
+
+            ############################################
             #crop image
-            new_img = mask_img[:, y1:y2, x1:x2]
+            # new_img = mask_img[:, y1:y2, x1:x2]
             # new_img = img[:, y1:y2, x1:x2]
             # binary_img = new_img.copy()
             # binary_img = np.sum(binary_img, axis=0)
