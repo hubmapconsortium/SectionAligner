@@ -61,6 +61,8 @@ def main(
     else:
         scale_factor_x = scale_factor
         scale_factor_y = scale_factor
+
+    pps = types.PhysicalPixelSizes(X=pixel_size[0], Y=pixel_size[1], Z=2.0)
     ###########################
 
     print('Starting...Read images')
@@ -166,6 +168,17 @@ def main(
 
         # plot_stack(aligned_tissue)
 
+        #save aligned tissue
+        summed_channels = np.sum(aligned_tissue, axis=1)
+        OmeTiffWriter.save(
+            summed_channels,
+            f"./{output_folder}/{file_basename}_{i}_sumChannels.ome.tif",
+            dim_order="ZYX",
+            channel_names=channelnames,
+            physical_pixel_sizes=pps,
+        )
+
+
         aligned_tissue_list.append(aligned_tissue)
 
         # OPTUNA - hyperparameter tuning
@@ -178,9 +191,6 @@ def main(
     # time the process
     start = time.time()
     # save stack images
-        
-    pps = types.PhysicalPixelSizes(X=pixel_size[0], Y=pixel_size[1], Z=2.0)
-
     for i, img in enumerate(aligned_tissue_list):
         OmeTiffWriter.save(
             img,
@@ -421,7 +431,8 @@ def calculate_metrics(aligned_image_4d, align_channel=0, threshold=30):
     all_binary_img_per_z = [generate_binary_mask(img) for img in all_sum_img_per_z]
 
     # sum all channels
-    prev_sum_img = all_sum_img_per_z[0]
+    # prev_sum_img = all_sum_img_per_z[0]
+
     
     # Convert the first slice to a binary mask and store as the previous slice's mask
     # prev_slice_mask = generate_binary_mask(aligned_image_4d[0, align_channel])
