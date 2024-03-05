@@ -13,7 +13,7 @@ from argparse import ArgumentParser
 # import pandas as pd
 import optuna
 import time
-import torch
+# import torch
 from skimage.filters import threshold_multiotsu
 
 CONST_PIXEL_SIZE_FOR_OPERATIONS = 0.5073519424785282 * 10 #microns
