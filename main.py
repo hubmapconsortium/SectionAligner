@@ -39,7 +39,7 @@ def main(
     # in hive
     # img_dir = Path('raw_data')
     # local
-    img_dir = Path('raw_data/IMGS')
+    # img_dir = Path('raw_data/IMGS')
 
 
     with open('raw_data/channelnames.txt', 'r') as file:
@@ -924,7 +924,7 @@ def save_arrays_as_images(arrays, use_colormap=False, output_folder='figures', f
 if __name__ == "__main__":
 
     p = ArgumentParser()
-    p.add_argument('--level', type=int, default=3, help='Pyrmaid level of the image, default is 0 which is the original image size')
+    p.add_argument('--level', type=int, default=0, help='Pyrmaid level of the image, default is 0 which is the original image size')
     p.add_argument('--thresh', type=int, default=30, help='Threshold value for binarization, default is done by otsu')
     p.add_argument('--kernel_size', type=int, default=0, help='Size of the structuring element used for closing, default is 0')
     p.add_argument('--holes_thresh', type=int, default=300, help='Area threshold for removing small holes, default is 300')
