@@ -13,6 +13,8 @@ from argparse import ArgumentParser
 # import pandas as pd
 import optuna
 import time
+import torch
+from skimage.filters import threshold_multiotsu
 
 CONST_PIXEL_SIZE_FOR_OPERATIONS = 0.5073519424785282 * 10 #microns
 
@@ -22,6 +24,7 @@ def main(
     kernel_size: int,
     holes_thresh: int,
     scale_factor: int,
+    align_upsample_factor: int,
     padding: int,
     connect: int, 
     pixel_size: list,
@@ -31,12 +34,12 @@ def main(
 ):
 
     start_begin = time.time()
-    img_dir = Path(input_folder)
+    # img_dir = Path(input_folder)
 
     # in hive
     # img_dir = Path('raw_data')
     # local
-    # img_dir = Path('raw_data/IMGS')
+    img_dir = Path('raw_data/IMGS')
 
 
     with open('raw_data/channelnames.txt', 'r') as file:
@@ -52,9 +55,9 @@ def main(
     # connect = 2
         
     # pixel_size = [0.5073519424785282, 0.5073519424785282] #microns
-    if pixel_size[1] == 0.5073519424785282 and pixel_size[0] == 0.5073519424785282:
-        scale_factor_x = CONST_PIXEL_SIZE_FOR_OPERATIONS / pixel_size[0]
-        scale_factor_y = CONST_PIXEL_SIZE_FOR_OPERATIONS / pixel_size[1]
+    if not pixel_size[1] == 0.5073519424785282 and not pixel_size[0] == 0.5073519424785282:
+        scale_factor_x = int(CONST_PIXEL_SIZE_FOR_OPERATIONS / pixel_size[0])
+        scale_factor_y = int(CONST_PIXEL_SIZE_FOR_OPERATIONS / pixel_size[1])
     else:
         scale_factor_x = scale_factor
         scale_factor_y = scale_factor
@@ -73,8 +76,11 @@ def main(
     for img in img_list:
         img_arr.append(img.series[0].levels[level].asarray())
 
-    img_2D = sum_channels(img_arr)
-    print('Time to read images + Summing all channels:', time.time() - start)
+    #downsample images - can replace orgining with this if we want to conserve memory
+    img_arr_downsample = [transform.downscale_local_mean(img, (1, scale_factor_x,scale_factor_y)) for img in img_arr]
+
+    img_2D = sum_channels(img_arr_downsample)
+    print('Time to read images + Downsampling + Summing all channels:', time.time() - start)
 
     # plot_img_from_list(img_2D)
 
@@ -91,7 +97,7 @@ def main(
     # img_2D_downsample = [transform.downscale_local_mean(img, (scale_factor,scale_factor)) for img in img_2D]
 
 
-    binary_imgs = [img > thresh[i] for i, img in enumerate(img_2D_downsample)]
+    binary_imgs = [img > thresh[i] for i, img in enumerate(img_2D)]
 
     # convert to binary image by thresholding > 0 
     # binary_imgs = [img > thresh for img in img_2D_downsample]
@@ -135,7 +141,7 @@ def main(
 
 
     # crop images
-    cropped_imgs = crop_imgs(img_arr, tissue_bbox, centroid_slices, scale_factor, padding, filtered_imgs, thresh)
+    cropped_imgs = crop_imgs(img_arr, tissue_bbox, centroid_slices, padding, filtered_imgs, align_upsample_factor, scale_factor_x, scale_factor_y)
     # cropped_imgs = crop_imgs([img_arr[4]], tissue_bbox, [centroid_slices[4]], scale_factor, padding, [filtered_imgs[4]])
     
     # stack images
@@ -150,11 +156,15 @@ def main(
     aligned_tissue_list = []
     for i, img in enumerate(stacked_imgs):
 
-        # Normal alignment#
+        # Normal alignment
         aligned_tissue = align_z_slices(img, ref_slices[i])
-        dice_list, d_avg = calculate_dice_coefficients(aligned_tissue)
+
+
+        dice_list, d_avg, area_consist = calculate_metrics(aligned_tissue)
         print(f"Average Dice coefficient: {d_avg}")
-        plot_stack(aligned_tissue)
+        print(f"Average Area consistency: {area_consist}")
+
+        # plot_stack(aligned_tissue)
 
         aligned_tissue_list.append(aligned_tissue)
 
@@ -205,6 +215,7 @@ def main(
 # )
 
 
+
 def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
     """
     Align all z-slices in a 4D image array to a reference z-slice.
@@ -247,6 +258,8 @@ def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
     # ref_slice = np.sum(image_4d[reference_z].transpose(1, 2, 0), axis=2)
     # ref_slice = np.mean(image_4d[reference_z], axis=0).astype(np.uint8)
 
+
+
     #one channel
     ref_slice = image_4d[reference_z, align_channel].astype(np.uint8)
     binary_ref = generate_binary_mask(ref_slice)
@@ -274,7 +287,11 @@ def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
             # current_slice = np.mean(image_4d[z], axis=0).astype(np.uint8)
             # current_slice = np.sum(image_4d[z].transpose(1, 2, 0), axis=2)
 
+            #one channel
             current_slice = image_4d[z, align_channel].astype(np.uint8)
+
+            #all channels
+            # current_slice = convert_to_grayscale_sum(image_4d[z])
 
             #otsu filter for threshold
             # _, current_slice = cv2.threshold(current_slice, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
@@ -313,8 +330,6 @@ def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
             intersection = np.logical_and(binary_ref, binary_slice)
             dice = 2. * intersection.sum() / (binary_ref.sum() + binary_slice.sum())
             print(f"For reference slice {reference_z} and current slice {z} the dice coeff: {dice}")
-            
-
 
         else:
             # Copy the reference slice as-is
@@ -331,7 +346,13 @@ def generate_binary_mask(image, threshold=30):
     :return: Binary mask of the image.
     """
     # _, binary_mask = cv2.threshold(image, threshold, 255, cv2.THRESH_BINARY)
-    _, binary_mask = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # _, binary_mask = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    thresholds = threshold_multiotsu(image, classes=3)
+    # binary_mask = np.zeros_like(image, dtype=np.uint8)
+    binary_mask = image > thresholds[0]
+    binary_mask = (image > 0).astype(np.uint8)  # Convert to binary mask
+
     return binary_mask
 
 def objective(trial, image_4d):
@@ -361,7 +382,7 @@ def objective(trial, image_4d):
     aligned_image_4d = align_z_slices(image_4d, params=params)
     
     # Evaluate alignment quality
-    _, average_dice = calculate_dice_coefficients(aligned_image_4d)
+    _, average_dice = calculate_metrics(aligned_image_4d)
     
     # Since Optuna minimizes the objective, return a negative value of the metric if higher is better
     return average_dice
@@ -371,12 +392,13 @@ def optimize_sift_parameters(image_4d):
     study = optuna.create_study(direction='maximize')
     study.optimize(lambda trial: objective(trial, image_4d), n_trials=100)  # Adjust n_trials to your preference
 
+    
     print('Number of finished trials:', len(study.trials))
     print('Best trial:', study.best_trial.params)
 
-def calculate_dice_coefficients(aligned_image_4d, align_channel=0, threshold=30):
+def calculate_metrics(aligned_image_4d, align_channel=0, threshold=30):
     """
-    Calculate the Dice coefficient between consecutive slices in a 4D image array
+    Calculate the Dice coefficient and area consistency between consecutive slices in a 4D image array
     after converting each slice into a binary image.
     
     :param aligned_image_4d: 4D image array with shape (z-slice, channels, height, width).
@@ -389,26 +411,55 @@ def calculate_dice_coefficients(aligned_image_4d, align_channel=0, threshold=30)
         return [], 0
 
     dice_coefficients = []
+    area_consistency = []
+
+    #get or of all channels
+    all_sum_img_per_z = [sum_channels(img) for img in aligned_image_4d]
+    all_sum_img_per_z = [convert_to_grayscale_sum(img) for img in all_sum_img_per_z]
+
+    #convert to binary mask
+    all_binary_img_per_z = [generate_binary_mask(img) for img in all_sum_img_per_z]
+
+    # sum all channels
+    prev_sum_img = all_sum_img_per_z[0]
     
     # Convert the first slice to a binary mask and store as the previous slice's mask
-    prev_slice_mask = generate_binary_mask(aligned_image_4d[0, align_channel])
+    # prev_slice_mask = generate_binary_mask(aligned_image_4d[0, align_channel])
+    # prev_slice_mask = generate_binary_mask(prev_sum_img)
+    prev_slice_mask = all_binary_img_per_z[0]
+
+    #or all images in the list 
+    image_coverage = np.logical_or.reduce(all_binary_img_per_z)
     
     for z in range(1, aligned_image_4d.shape[0]):
         # Convert the current slice to a binary mask
-        current_slice_mask = generate_binary_mask(aligned_image_4d[z, align_channel])
+        # current_sum_img = convert_to_grayscale_sum(aligned_image_4d[z])
+
+        # current_slice_mask = generate_binary_mask(aligned_image_4d[z, align_channel])
+        # current_slice_mask = generate_binary_mask(current_sum_img)
+        current_slice_mask = all_binary_img_per_z[z]
         
         # Calculate Dice coefficient
         intersection = np.logical_and(prev_slice_mask, current_slice_mask)
         dice = 2. * intersection.sum() / (prev_slice_mask.sum() + current_slice_mask.sum())
-        
+
+        # Calculate area consistency
+        compare = (current_slice_mask == image_coverage)
+        overlap = compare.sum() / image_coverage.sum()
+
+        print(f"Slice {z} - Dice coefficient (compared to previous slice): {dice}, Area consistency (compared to overall coverage): {overlap}")
+
+
+        area_consistency.append(compare.sum() / image_coverage.sum())
         dice_coefficients.append(dice)
         
         # Update the previous slice mask
         prev_slice_mask = current_slice_mask
 
     average_dice = np.mean(dice_coefficients) if dice_coefficients else 0
+    average_area_consistency = np.mean(area_consistency) if area_consistency else 0
     
-    return dice_coefficients, average_dice
+    return dice_coefficients, average_dice, average_area_consistency
 
 def plot_stack(image_4d, align_channel=0):
     fig, axes = plt.subplots(1, image_4d.shape[0], figsize=(15, 5))
@@ -501,7 +552,7 @@ def close_blob(binary_image, kernel_size=10):
     
     return closed_image
 
-def upsample_image(image, upsample_factor):
+def upsample_image(image, sfx, sfy):
     """
     Upsample the image by the specified factor.
 
@@ -510,15 +561,15 @@ def upsample_image(image, upsample_factor):
     :return: Upsampled image.
     """
     # Calculate the new dimensions
-    new_height = int(image.shape[0] * upsample_factor)
-    new_width = int(image.shape[1] * upsample_factor)
+    new_height = int(image.shape[0] * sfy)
+    new_width = int(image.shape[1] * sfx)
 
     # Upsample the image using cubic interpolation
     upsampled_image = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
 
     return upsampled_image
 
-def crop_imgs(imgs, bbox, centroids, sf, padding, filtered_imgs, thresh):
+def crop_imgs(imgs, bbox, centroids, padding, filtered_imgs, upsample_factor, sfx, sfy):
     
     cropped_slices = []
 
@@ -528,7 +579,7 @@ def crop_imgs(imgs, bbox, centroids, sf, padding, filtered_imgs, thresh):
             w, h = bbox[j]
             cX, cY = centroids[i][j]
             # x, y, _, _ = bbox_slices[i][j]
-            x1, y1, x2, y2 = create_bounding_box(cX, cY, w, h, img, sf, padding)
+            x1, y1, x2, y2 = create_bounding_box(cX, cY, w, h, img, padding, sfx, sfy, scale=True)
 
 
             #close blob of filtered image
@@ -536,12 +587,14 @@ def crop_imgs(imgs, bbox, centroids, sf, padding, filtered_imgs, thresh):
             #dilate filtered image
             mask = morphological_operation(mask, kernel_size=10, operation='dilation')
 
+            # if scale is True
             #use upsample mask on original image
-            upsampled_mask = upsample_image(mask, sf)
+            upsampled_mask = upsample_image(mask, sfx, sfy)
             upsampled_mask = (upsampled_mask > 0).astype(np.uint8) #convert to [0, 1]
 
             #apply mask to original image
             mask_img = img * upsampled_mask
+            # mask_img = img * mask
 
             #crop image
             new_img = mask_img[:, y1:y2, x1:x2]
@@ -577,17 +630,23 @@ def crop_imgs(imgs, bbox, centroids, sf, padding, filtered_imgs, thresh):
     
     return cropped_slices
 
-def create_bounding_box(cX, cY, width, height, img, sf, padding):
+def create_bounding_box(cX, cY, width, height, img, padding, sfx, sfy, scale=True):
     x1 = cX - width // 2
     y1 = cY - height // 2
     x2 = cX + width // 2
     y2 = cY + height // 2
 
-    # Adjust if bounding box goes beyond image boundaries (assuming image dimensions are known)
-    x1 = max(x1, 0) * sf
-    y1 = max(y1, 0) * sf
-    x2 = min(x2, img.shape[2]) * sf
-    y2 = min(y2, img.shape[1]) * sf
+    if scale:
+        # Adjust if bounding box goes beyond image boundaries (assuming image dimensions are known)
+        x1 = max(x1, 0) * sfx
+        y1 = max(y1, 0) * sfy
+        x2 = min(x2, img.shape[2]) * sfx
+        y2 = min(y2, img.shape[1]) * sfy
+    else: 
+        x1 = max(x1, 0)
+        y1 = max(y1, 0)
+        x2 = min(x2, img.shape[2])
+        y2 = min(y2, img.shape[1])
 
     #create padding
     x1 = max(x1 - padding, 0)
@@ -865,7 +924,7 @@ def save_arrays_as_images(arrays, use_colormap=False, output_folder='figures', f
 if __name__ == "__main__":
 
     p = ArgumentParser()
-    p.add_argument('--level', type=int, default=0, help='Pyrmaid level of the image, default is 0 which is the original image size')
+    p.add_argument('--level', type=int, default=3, help='Pyrmaid level of the image, default is 0 which is the original image size')
     p.add_argument('--thresh', type=int, default=30, help='Threshold value for binarization, default is done by otsu')
     p.add_argument('--kernel_size', type=int, default=0, help='Size of the structuring element used for closing, default is 0')
     p.add_argument('--holes_thresh', type=int, default=300, help='Area threshold for removing small holes, default is 300')
@@ -876,6 +935,7 @@ if __name__ == "__main__":
     p.add_argument('--output_folder', type=str, default='outputs', help='Output folder for saving images, default is outputs')
     p.add_argument('--input_folder', type=str, default='raw_data', help='Input folder for reading images, default is inputs')
     p.add_argument('--output_file_basename', type=str, default='aligned_tissue', help='Output file basename, default is aligned_tissue')
+    p.add_argument('--align_upsample_factor', type=int, default=2, help='Upsample factor for aligning images, default is 2')
 
     args = p.parse_args()
 
@@ -885,6 +945,7 @@ if __name__ == "__main__":
         kernel_size = args.kernel_size,
         holes_thresh = args.holes_thresh,
         scale_factor = args.scale_factor,
+        align_upsample_factor = args.align_upsample_factor,
         padding = args.padding,
         connect = args.connect,
         pixel_size = args.pixel_size,
