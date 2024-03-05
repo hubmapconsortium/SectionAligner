@@ -34,7 +34,7 @@ def main(
 ):
 
     start_begin = time.time()
-    # img_dir = Path(input_folder)
+    img_dir = Path(input_folder)
 
     # in hive
     # img_dir = Path('raw_data')
