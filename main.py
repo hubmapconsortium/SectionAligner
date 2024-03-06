@@ -248,10 +248,10 @@ def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
 
     else:
         n_features = 0  # 0 means no limit
-        n_octave_layers = 3  # Default value
-        contrast_threshold = 0.05  # Lowering this might result in more features being detected
-        edge_threshold = 10 
-        sigma = 1.6  
+        n_octave_layers = 4  # Default value
+        contrast_threshold = 0.03  # Lowering this might result in more features being detected
+        edge_threshold = 5  # Lowering this might result in more features being detected 
+        sigma = 2  
         ratio_threshold = 0.75  # Lowe's ratio test
         flann_check = 200
         flann_trees = 20
