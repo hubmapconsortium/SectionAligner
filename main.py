@@ -79,9 +79,11 @@ def main(
         img_arr.append(img.series[0].levels[level].asarray())
 
     #downsample images - can replace orgining with this if we want to conserve memory
-    img_arr_downsample = [transform.downscale_local_mean(img, (1, scale_factor_x,scale_factor_y)) for img in img_arr]
+    # img_arr_downsample = [transform.downscale_local_mean(img, (1, scale_factor_x,scale_factor_y)) for img in img_arr]
 
-    img_2D = sum_channels(img_arr_downsample)
+    # img_2D = sum_channels(img_arr_downsample)
+        
+    img_2D = sum_channels(img_arr)
     print('Time to read images + Downsampling + Summing all channels:', time.time() - start)
 
     # plot_img_from_list(img_2D)
@@ -91,18 +93,19 @@ def main(
     start = time.time()
     # otsu for threshold for automation
     if thresh == None:
-        thresh = [cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[0] for img in img_2D]
+        # thresh = [cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[0] for img in img_2D]
+        thresh = [threshold_multiotsu(img, classes=3)[0] for img in img_2D]
     else:
         thresh = [thresh for _ in img_2D]
 
     #downsample images
-    # img_2D_downsample = [transform.downscale_local_mean(img, (scale_factor,scale_factor)) for img in img_2D]
+    img_2D_downsample = [transform.downscale_local_mean(img, (scale_factor,scale_factor)) for img in img_2D]
 
 
-    binary_imgs = [img > thresh[i] for i, img in enumerate(img_2D)]
+    # binary_imgs = [img > thresh[i] for i, img in enumerate(img_2D)]
 
     # convert to binary image by thresholding > 0 
-    # binary_imgs = [img > thresh for img in img_2D_downsample]
+    binary_imgs = [img > thresh[i] for i, img in enumerate(img_2D_downsample)]
     binary_imgs = [(img * 255).astype(np.uint8) for img in binary_imgs]
 
     # plot_img_from_list(binary_imgs)
@@ -603,13 +606,13 @@ def crop_imgs(imgs, bbox, centroids, padding, filtered_imgs, upsample_factor, sf
             upsampled_mask = (upsampled_mask > 0).astype(np.uint8) #convert to [0, 1]
 
             #crop image and mask first to save memory
-            img = img[:, y1:y2, x1:x2]
+            new_img = img[:, y1:y2, x1:x2]
             upsampled_mask = upsampled_mask[y1:y2, x1:x2]
 
             #apply mask to original image
             # mask_img = img * upsampled_mask
             # mask_img = img * mask
-            new_img = img * upsampled_mask
+            new_img = new_img * upsampled_mask
 
             ############################################
             #crop image
