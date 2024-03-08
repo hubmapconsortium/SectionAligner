@@ -79,11 +79,11 @@ def main(
         img_arr.append(img.series[0].levels[level].asarray())
 
     #downsample images - can replace orgining with this if we want to conserve memory
-    # img_arr_downsample = [transform.downscale_local_mean(img, (1, scale_factor_x,scale_factor_y)) for img in img_arr]
+    img_arr_downsample = [transform.downscale_local_mean(img, (1, scale_factor_x,scale_factor_y)) for img in img_arr]
 
-    # img_2D = sum_channels(img_arr_downsample)
+    img_2D = sum_channels(img_arr_downsample)
         
-    img_2D = sum_channels(img_arr)
+    # img_2D = sum_channels(img_arr)
     print('Time to read images + Downsampling + Summing all channels:', time.time() - start)
 
     # plot_img_from_list(img_2D)
@@ -99,13 +99,14 @@ def main(
         thresh = [thresh for _ in img_2D]
 
     #downsample images
-    img_2D_downsample = [transform.downscale_local_mean(img, (scale_factor,scale_factor)) for img in img_2D]
+    # img_2D_downsample = [transform.downscale_local_mean(img, (scale_factor,scale_factor)) for img in img_2D]
 
 
-    # binary_imgs = [img > thresh[i] for i, img in enumerate(img_2D)]
+
 
     # convert to binary image by thresholding > 0 
-    binary_imgs = [img > thresh[i] for i, img in enumerate(img_2D_downsample)]
+    binary_imgs = [img > thresh[i] for i, img in enumerate(img_2D)]
+    # binary_imgs = [img > thresh[i] for i, img in enumerate(img_2D_downsample)]
     binary_imgs = [(img * 255).astype(np.uint8) for img in binary_imgs]
 
     # plot_img_from_list(binary_imgs)
