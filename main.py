@@ -162,6 +162,15 @@ def main(
     aligned_tissue_list = []
     for i, img in enumerate(stacked_imgs):
 
+        # save before alignment
+        summed_channels = np.sum(img, axis=1).astype(np.uint8)
+        OmeTiffWriter.save(
+            summed_channels,
+            f"{output_folder}/{file_basename}_{i}_sumChannels_beforeAlignment.ome.tif",
+            dim_order="ZYX",
+            physical_pixel_sizes=pps,
+        )
+
         # Normal alignment
         aligned_tissue = align_z_slices(img, ref_slices[i])
 
@@ -282,6 +291,8 @@ def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
 
     keypoints_ref, descriptors_ref = sift.detectAndCompute(ref_slice, None)
 
+    
+
     # Initialize FLANN based matcher
     FLANN_INDEX_KDTREE = 1
     index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=flann_trees)
@@ -311,12 +322,19 @@ def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
 
             keypoints, descriptors = sift.detectAndCompute(current_slice, None)
 
+            #print keypoints and descriptors
+            print(f"Keypoints: {len(keypoints)}")
+            print(f"Descriptors: {descriptors.shape}")
+
             # Match descriptors
             matches = flann.knnMatch(descriptors_ref, descriptors, k=2)
 
             # Filter matches using Lowe's ratio test
             # good_matches = [m for m, n in matches if m.distance < 0.75 * n.distance]
             good_matches = [m for m, n in matches if m.distance < ratio_threshold * n.distance]
+
+            #print good matches
+            print(f"Good matches: {len(good_matches)}")
 
             # Find homography matrix
             src_pts = np.float32([keypoints[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
@@ -325,6 +343,9 @@ def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
             try: 
                 M, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
                 aligned_slice = cv2.warpPerspective(image_4d[z].transpose(1, 2, 0), M, (image_4d.shape[3], image_4d.shape[2]))
+
+                #print M
+                print(f"Homography matrix for slice {z}: {M}")
             except Exception as e:
                 print(e)
                 return None
@@ -362,6 +383,7 @@ def generate_binary_mask(image, threshold=30):
     # _, binary_mask = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
     thresholds = threshold_multiotsu(image, classes=3)
+    print(f"Multi Otsu: {thresholds}")
     # binary_mask = np.zeros_like(image, dtype=np.uint8)
     binary_mask = image > thresholds[0]
     binary_mask = (image > 0).astype(np.uint8)  # Convert to binary mask
