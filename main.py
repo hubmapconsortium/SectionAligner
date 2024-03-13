@@ -15,10 +15,15 @@ import optuna
 import time
 # import torch
 from skimage.filters import threshold_multiotsu
+from scipy.spatial.distance import cdist
+from sklearn.preprocessing import StandardScaler
+from numpy.fft import fft
 
-CONST_PIXEL_SIZE_FOR_OPERATIONS = 0.5073519424785282 * 10 #microns
+# CONST_PIXEL_SIZE_FOR_OPERATIONS = 0.5073519424785282 * 10 #microns
+CONST_PIXEL_SIZE_FOR_OPERATIONS = 4.058815539828226 * 10 #microns
 
 def main(
+    num_tissue: int,
     level: int, 
     thresh: int,
     kernel_size: int,
@@ -34,12 +39,12 @@ def main(
 ):
 
     start_begin = time.time()
-    img_dir = Path(input_folder)
+    # img_dir = Path(input_folder)
 
     # in hive
     # img_dir = Path('raw_data')
     # local
-    # img_dir = Path('raw_data/IMGS')
+    img_dir = Path('raw_data/IMGS')
 
 
     with open('raw_data/channelnames.txt', 'r') as file:
@@ -55,7 +60,7 @@ def main(
     # connect = 2
         
     # pixel_size = [0.5073519424785282, 0.5073519424785282] #microns
-    if not pixel_size[1] == 0.5073519424785282 and not pixel_size[0] == 0.5073519424785282:
+    if not pixel_size[1] == 4.058815539828226 and not pixel_size[0] == 4.058815539828226:
         scale_factor_x = int(CONST_PIXEL_SIZE_FOR_OPERATIONS / pixel_size[0])
         scale_factor_y = int(CONST_PIXEL_SIZE_FOR_OPERATIONS / pixel_size[1])
     else:
@@ -70,7 +75,7 @@ def main(
     start = time.time()
     # Load images
     img_list = []
-    img_list_sorted =  sorted(img_dir.glob('*.qptiff'))
+    img_list_sorted =  sorted(img_dir.glob('*.qptiff'), key=lambda x: x.name[:3].lower())
     for img_path in img_list_sorted:
         img_list.append(tiff.TiffFile(img_path))
 
@@ -94,7 +99,7 @@ def main(
     # otsu for threshold for automation
     if thresh == None:
         # thresh = [cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[0] for img in img_2D]
-        thresh = [threshold_multiotsu(img, classes=3)[0] for img in img_2D]
+        thresh = [threshold_multiotsu(img, classes=3)[0] / 2 for img in img_2D]
     else:
         thresh = [thresh for _ in img_2D]
 
@@ -116,38 +121,57 @@ def main(
     filled_imgs = [morphology.remove_small_holes(img, area_threshold=holes_thresh) for img in closed_imgs] 
     filled_imgs = [(img * 255).astype(np.uint8) for img in filled_imgs]
 
+    # image opening
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(3,3))
+    opened_imgs = [cv2.morphologyEx(img, cv2.MORPH_OPEN, kernel) for img in filled_imgs]
+
+    # dilate image then close
+    dilated_imgs = [morphological_operation(img, 0, 'dilation') for img in opened_imgs]
+    closed_imgs_2 = [morphological_operation(img, kernel_size, 'closing') for img in dilated_imgs]
+
+    # remove holes again
+    filled_imgs_2 = [morphology.remove_small_holes(img, area_threshold=holes_thresh) for img in closed_imgs_2]
+    filled_imgs_2 = [(img * 255).astype(np.uint8) for img in filled_imgs_2]
+
     # erode image
-    eroded_imgs = [morphological_operation(img, kernel_size, 'erosion') for img in filled_imgs]
+    eroded_imgs = [morphological_operation(img, kernel_size, 'erosion') for img in filled_imgs_2]
 
     # dilate image back
-    dilated_imgs = [morphological_operation(img, kernel_size, 'dilation') for img in eroded_imgs]
+    dilated_imgs_2 = [morphological_operation(img, kernel_size, 'dilation') for img in eroded_imgs]
+    processed_imgs = [morphological_operation(img, int(kernel_size / 2), 'dilation') for img in dilated_imgs_2]
 
-    connected_comp_imgs = [cv2.connectedComponentsWithStats(img, connect, cv2.CV_32S) for img in dilated_imgs]
+    connected_comp_imgs = [cv2.connectedComponentsWithStats(img, connect, cv2.CV_32S) for img in processed_imgs]
 
     print('Time to Preprocess images:', time.time() - start)
 
     print('Detecting tissues...')
     # time the process
     start = time.time()
-    filtered_imgs = [detect_tissues(img) for img in connected_comp_imgs]
+    # filtered_imgs = [detect_tissues(img, num_tissue) for img in connected_comp_imgs]
+    iso_imgs, full_labels  = detect_tissues(connected_comp_imgs, num_tissue)
     print('Time to Detect tissues:', time.time() - start)
 
     ### COLOR LABEL IMAGES ###
-    # filtered_labels = [detect_tissues(img)[1] for img in connected_comp_imgs]
-    # save_arrays_as_images(filtered_labels, use_colormap=True, output_folder='figures', file_prefix="labels", file_extension=".png")
+    # save_arrays_as_images(full_labels, use_colormap=True, output_folder='figures', file_prefix="labels", file_extension=".png")
     ##########################
 
-    assert_same_length(filtered_imgs)
+    #Match overlap of filtered images so that the same tissues are matching
+    # time the process
+    # start = time.time()
+    # filtered_imgs = match_overlap(filtered_imgs)
+    # print('Time to Match overlap:', time.time() - start)
+
+    assert_same_length(iso_imgs)
 
     print('Cropping images and stack...')
     # time the process
     start = time.time()
     # find biggest bounding box and mask
-    tissue_bbox, centroid_slices, bbox_slices, ref_slices = find_biggest_bound_box(filtered_imgs)
+    tissue_bbox, centroid_slices, bbox_slices, ref_slices = find_biggest_bound_box(iso_imgs)
 
 
     # crop images
-    cropped_imgs = crop_imgs(img_arr, tissue_bbox, centroid_slices, padding, filtered_imgs, align_upsample_factor, scale_factor_x, scale_factor_y)
+    cropped_imgs = crop_imgs(img_arr, tissue_bbox, centroid_slices, padding, iso_imgs, align_upsample_factor, scale_factor_x, scale_factor_y, kernel_size, scale=True)
     # cropped_imgs = crop_imgs([img_arr[4]], tissue_bbox, [centroid_slices[4]], scale_factor, padding, [filtered_imgs[4]])
     
     # stack images
@@ -422,6 +446,7 @@ def objective(trial, image_4d):
     # Since Optuna minimizes the objective, return a negative value of the metric if higher is better
     return average_dice
 
+
 # Example usage
 def optimize_sift_parameters(image_4d):
     study = optuna.create_study(direction='maximize')
@@ -605,7 +630,7 @@ def upsample_image(image, sfx, sfy):
 
     return upsampled_image
 
-def crop_imgs(imgs, bbox, centroids, padding, filtered_imgs, upsample_factor, sfx, sfy):
+def crop_imgs(imgs, bbox, centroids, padding, filtered_imgs, upsample_factor, sfx, sfy, kernel_size=10, scale=True):
     
     cropped_slices = []
 
@@ -618,10 +643,10 @@ def crop_imgs(imgs, bbox, centroids, padding, filtered_imgs, upsample_factor, sf
             x1, y1, x2, y2 = create_bounding_box(cX, cY, w, h, img, padding, sfx, sfy, scale=True)
 
 
-            #close blob of filtered image
-            mask = close_blob(filtered_imgs[i][0][j], kernel_size=25)
+            #close blob of filtered image - #25 kernel size before
+            mask = close_blob(filtered_imgs[i][j], kernel_size=kernel_size)
             #dilate filtered image
-            mask = morphological_operation(mask, kernel_size=10, operation='dilation')
+            mask = morphological_operation(mask, kernel_size=kernel_size, operation='dilation')
 
             # if scale is True
             #use upsample mask on original image
@@ -763,7 +788,7 @@ def compute_bounding_box(imgs):
     centroids = []
 
     #get the individual tissues
-    for img in imgs[0]:
+    for img in imgs:
         # Find contours in the image
         contours, _ = cv2.findContours(img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -805,44 +830,184 @@ def compute_bounding_box(imgs):
 
     return bounding_box, centroids
 
-def detect_tissues(cc_img, num_tissue=8):
+def detect_tissues(cc_img_list, num_tissue=8):
 
-    iso_tissue = []
+    filtered_imgs = []
+    new_values = np.arange(0, num_tissue + 1)  # New label values for the filtered images
 
-    num_labels = cc_img[0]  # The first cell is the number of labels
-    labels = cc_img[1]  # The second cell is the label matrix itself
-    stats = cc_img[2]  # The third cell is the stat matrix
+    for cc_img in cc_img_list:
+        iso_tissue = []
 
-    #remove island and small blobs
-    # new_labels = remove_islands_and_small_blobs(labels)
+        num_labels = cc_img[0]  # The first cell is the number of labels
+        labels = cc_img[1]  # The second cell is the label matrix itself
+        stats = cc_img[2]  # The third cell is the stat matrix
 
-
-    nunique = np.unique(labels)
-    sort_stats = stats[:, cv2.CC_STAT_AREA].copy()
-    sort_stats.sort()
-    # Filter based on size
-    min_size = sort_stats[-num_tissue - 1]  # Set your minimum size threshold
-
-    tissue_values = nunique[stats[:, cv2.CC_STAT_AREA] >= min_size]
+        #remove island and small blobs
+        # new_labels = remove_islands_and_small_blobs(labels)
 
 
-    # Create a new image that will be the filtered result
-    new_labels = filter_array(labels, tissue_values)
+        nunique = np.unique(labels)
+        sort_stats = stats[:, cv2.CC_STAT_AREA].copy()
+        sort_stats.sort()
+        # Filter based on size
+        min_size = sort_stats[-num_tissue - 1]  # Set your minimum size threshold
 
-    #renumber labels to be sequential
-    new_values = np.arange(0, len(tissue_values))
+        tissue_values = nunique[stats[:, cv2.CC_STAT_AREA] >= min_size]
 
-    for new, old in zip(new_values, tissue_values):
-        new_labels[new_labels == old] = new
+        # Create a new image that will be the filtered result
+        new_labels = filter_array(labels, tissue_values)
 
-    for i in new_values[1:]:  # Skip the background label 0
-        large_blobs = np.zeros_like(labels, dtype=np.uint8)
-        large_blobs[new_labels == i] = 255
-        iso_tissue.append(large_blobs)
+        #renumber labels to be sequential
+        
+        for new, old in zip(new_values, tissue_values):
+            new_labels[new_labels == old] = new
+
+        filtered_imgs.append(new_labels)
+
+    matches = match_all_images(filtered_imgs)
+    global_mappings = propagate_labels(matches)
+    reindexed_images = apply_new_labels(filtered_imgs, global_mappings)
+
+    slices_tissue = []
+    for img in reindexed_images:
+        iso_tissue = []
+        for i in new_values[1:]:  # Skip the background label 0
+            large_blobs = np.zeros_like(img, dtype=np.uint8)
+            large_blobs[img == i] = 255
+            iso_tissue.append(large_blobs)
+        slices_tissue.append(iso_tissue)
     
-    return iso_tissue, new_labels
+    # filtered_imgs.append((iso_tissue, new_labels))
 
-    # return new_labels
+    return slices_tissue, reindexed_images
+
+def propagate_labels(all_matches):
+    """
+    Propagates label changes across all images based on match mappings.
+    
+    :param all_matches: List of dictionaries with match mappings between consecutive image pairs.
+    :return: List of dictionaries representing the global label mapping for each image.
+    """
+    global_mappings = [{} for _ in range(len(all_matches) + 1)]  # Initialize global mappings
+
+    # Start with the first image, assuming its labels are correct
+    for label in range(1, 9):  # Assuming labels 1 to 8
+        global_mappings[0][label] = label
+    
+    # Propagate matches
+    for i, matches in enumerate(all_matches):
+        for label1, label2 in matches.items():
+            global_mappings[i + 1][label2] = global_mappings[i][label1]
+    
+    return global_mappings
+
+def apply_new_labels(images, global_mappings):
+    """
+    Applies new labels to all images based on the global label mappings.
+    
+    :param images: List of 2D arrays, each representing an image with labeled blobs.
+    :param global_mappings: List of dictionaries representing the global label mapping for each image.
+    :return: List of 2D arrays with reindexed blobs.
+    """
+    reindexed_images = []
+    for img, mapping in zip(images, global_mappings):
+        new_img = np.zeros_like(img)
+        for old_label, new_label in mapping.items():
+            new_img[img == old_label] = new_label
+        reindexed_images.append(new_img)
+    return reindexed_images
+
+def extract_features(image):
+    """
+    Extracts a comprehensive set of features for each labeled blob in the image,
+    including area, centroid, Hu Moments, eccentricity, solidity, perimeter,
+    compactness, and Fourier Descriptors.
+    Returns a dictionary with labels as keys and feature vectors as values.
+    """
+    features = {}
+    for label in np.unique(image):
+        if label == 0:  # Skip background
+            continue
+        blob = (image == label).astype(np.uint8)
+        
+        # Find contours for the current blob
+        contours, _ = cv2.findContours(blob, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        largest_contour = max(contours, key=cv2.contourArea)
+        
+        # Basic Shape Descriptors
+        area = cv2.contourArea(largest_contour)
+        M = cv2.moments(largest_contour)
+        centroid_x = M['m10'] / M['m00']
+        centroid_y = M['m01'] / M['m00']
+        huMoments = cv2.HuMoments(M).flatten()
+        
+        # Eccentricity and Solidity
+        (x, y), (MA, ma), angle = cv2.fitEllipse(largest_contour)
+        eccentricity = np.sqrt(1 - (MA/ma)**2)
+        hull = cv2.convexHull(largest_contour)
+        hull_area = cv2.contourArea(hull)
+        solidity = float(area) / hull_area
+        
+        # Boundary Features
+        perimeter = cv2.arcLength(largest_contour, True)
+        compactness = (perimeter**2) / (4 * np.pi * area)
+        
+        # Fourier Descriptors
+        contour_complex = largest_contour[:, 0, 0] + 1j * largest_contour[:, 0, 1]
+        fourier_result = fft(contour_complex)
+        # Normalize and keep a fixed number of descriptors
+        fourier_descriptors = np.abs(fourier_result[:5]) / np.abs(fourier_result[1])
+
+        # Combine all features into a single vector
+        features[label] = np.hstack([area, centroid_x, centroid_y, huMoments, eccentricity, solidity, perimeter, compactness, fourier_descriptors])
+        
+    return features
+
+def standardize_features(features):
+    """
+    Standardizes the feature vectors for all blobs across all images.
+    """
+    all_features = np.vstack(list(features.values()))
+    scaler = StandardScaler().fit(all_features)
+    for label in features:
+        features[label] = scaler.transform(features[label].reshape(1, -1))
+    return features
+
+def compare_blobs(features1, features2):
+    """
+    Compares blobs between two images based on their standardized features.
+    Returns a dictionary mapping labels in the first image to labels in the second image.
+    """
+    labels1, features1 = zip(*features1.items())
+    labels2, features2 = zip(*features2.items())
+    features1 = np.array(features1).squeeze()
+    features2 = np.array(features2).squeeze()
+    
+    # Calculate pairwise distances between standardized feature vectors
+    distances = cdist(features1, features2, 'euclidean')
+    
+    matches = {}
+    for i, label1 in enumerate(labels1):
+        match_index = np.argmin(distances[i])
+        match_label = labels2[match_index]
+        matches[label1] = match_label
+    return matches
+
+def match_all_images(images):
+    """
+    Matches blobs across multiple images after standardizing features.
+    """
+    all_matches = []
+    all_features = [extract_features(img) for img in images]
+
+    # Standardize features across all blobs in all images
+    standardized_features = [standardize_features(features) for features in all_features]
+    
+    for i in range(len(standardized_features) - 1):
+        matches = compare_blobs(standardized_features[i], standardized_features[i + 1])
+        all_matches.append(matches)
+    
+    return all_matches
 
 def filter_array(arr, values):
     """
@@ -914,7 +1079,7 @@ def sum_channels(img_arr):
 def plot_img_from_list(img_list):
     fig, ax = plt.subplots(1, len(img_list))
     for i, img in enumerate(img_list):
-        ax[i].imshow(img)
+        ax[i].imshow(img, cmap='gray')
         ax[i].axis('off')
     plt.tight_layout()
     plt.show()
@@ -966,14 +1131,16 @@ def save_arrays_as_images(arrays, use_colormap=False, output_folder='figures', f
 if __name__ == "__main__":
 
     p = ArgumentParser()
-    p.add_argument('--level', type=int, default=0, help='Pyrmaid level of the image, default is 0 which is the original image size')
-    p.add_argument('--thresh', type=int, default=30, help='Threshold value for binarization, default is done by otsu')
-    p.add_argument('--kernel_size', type=int, default=0, help='Size of the structuring element used for closing, default is 0')
-    p.add_argument('--holes_thresh', type=int, default=300, help='Area threshold for removing small holes, default is 300')
+    p.add_argument('--num_tissue', type=int, default=8, help='Number of tissues to detect, default is 8')
+    p.add_argument('--level', type=int, default=3, help='Pyrmaid level of the image, default is 0 which is the original image size')
+    p.add_argument('--thresh', type=int, default=None, help='Threshold value for binarization, default is done by otsu')
+    p.add_argument('--kernel_size', type=int, default=10, help='Size of the structuring element used for closing, default is 0')
+    p.add_argument('--holes_thresh', type=int, default=2000, help='Area threshold for removing small holes, default is 300')
     p.add_argument('--scale_factor', type=int, default=10, help='Scale factor for downsample, default is 10')
     p.add_argument('--padding', type=int, default=20, help='Padding for bounding box, default is 20')
     p.add_argument('--connect', type=int, default=2, help='Connectivity for connected components, default is 2')
-    p.add_argument('--pixel_size', type=list, default=[0.5073519424785282, 0.5073519424785282], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
+    # p.add_argument('--pixel_size', type=list, default=[0.5073519424785282, 0.5073519424785282], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
+    p.add_argument('--pixel_size', type=list, default=[4.058815539828226, 4.058815539828226], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
     p.add_argument('--output_folder', type=str, default='./outputs', help='Output folder for saving images, default is outputs')
     p.add_argument('--input_folder', type=str, default='raw_data', help='Input folder for reading images, default is inputs')
     p.add_argument('--output_file_basename', type=str, default='aligned_tissue', help='Output file basename, default is aligned_tissue')
@@ -982,6 +1149,7 @@ if __name__ == "__main__":
     args = p.parse_args()
 
     main(
+        num_tissue = args.num_tissue,
         level = args.level,
         thresh = args.thresh,
         kernel_size = args.kernel_size,
