@@ -649,6 +649,9 @@ def crop_imgs(imgs, bbox, centroids, padding, filtered_imgs, upsample_factor, sf
             # #dilate filtered image
             # mask = morphological_operation(mask, kernel_size=kernel_size, operation='dilation')
 
+            #erode image a bit to not include noise around the tissue
+            # mask = morphological_operation(mask, kernel_size=kernel_size, operation='erosion')
+
             # if scale is True
             #use upsample mask on original image
             upsampled_mask = upsample_image(mask, sfx, sfy)
@@ -865,22 +868,138 @@ def detect_tissues(cc_img_list, num_tissue=8):
 
         filtered_imgs.append(new_labels)
 
-    matches = match_all_images(filtered_imgs)
-    global_mappings = propagate_labels(matches)
-    reindexed_images = apply_new_labels(filtered_imgs, global_mappings)
+    # Relative position matching by centroid
+    all_centroids = [calculate_centroids(img) for img in filtered_imgs]
+    sorted_labels_per_image = [sort_split_combine(centroids) for centroids in all_centroids]
 
-    slices_tissue = []
-    for img in reindexed_images:
-        iso_tissue = []
-        for i in new_values[1:]:  # Skip the background label 0
-            large_blobs = np.zeros_like(img, dtype=np.uint8)
-            large_blobs[img == i] = 255
-            iso_tissue.append(large_blobs)
-        slices_tissue.append(iso_tissue)
+
+    # MATCHING BASED ON FEATURES
+    # matches = match_all_images(filtered_imgs)
+    # global_mappings = propagate_labels(matches)
+    # reindexed_images = apply_new_labels(filtered_imgs, global_mappings)
+        
+    # MATCHING BASED ON OVERLAP
+    # max_height = max(img.shape[0] for img in filtered_imgs)
+    # max_width = max(img.shape[1] for img in filtered_imgs)
+
+    # # Pad images to the maximum width and height
+    # padded_images = [np.pad(img, ((0, max_height - img.shape[0]), (0, max_width - img.shape[1])), 'constant', constant_values=0) for img in filtered_imgs]
+
+    # all_matches = []  # To store match results for each image pair
+
+    # for i in range(len(padded_images) - 1):
+    #     source_image = padded_images[i]
+    #     target_image = padded_images[i + 1]
+    #     matches = {}
+    #     overlaps = {}
+    #     matched_list = []
+
+    #     for label in range(1, num_tissue+1):  # Assuming labels 1 to 8
+    #         matching_label, overlap = calculate_overlap(source_image, target_image, label, matched_list)
+    #         matched_list.append(matching_label)
+    #         if matching_label is not None:
+    #             matches[label] = matching_label
+    #             overlaps[(label, matching_label)] = overlap
+
+    #     all_matches.append(matches)
+
+    # global_mappings = propagate_labels(all_matches)
+    # reindexed_images = apply_new_labels(filtered_imgs, global_mappings)
     
-    # filtered_imgs.append((iso_tissue, new_labels))
+    slices_tissue = []
+    remapped_images = []
+    for i, img in enumerate(filtered_imgs):
+        iso_tissue = []
 
-    return slices_tissue, reindexed_images
+        remapped_image = np.zeros_like(img)
+        for label, index in sorted_labels_per_image[i].items():  # Skip the background label 0
+            large_blobs = np.zeros_like(img, dtype=np.uint8)
+            large_blobs[img == label] = 255
+            iso_tissue.append(large_blobs)
+
+            #renumber 
+            remapped_image[img == label] = index
+        slices_tissue.append(iso_tissue)
+        remapped_images.append(remapped_image)
+
+    return slices_tissue, remapped_images
+
+def sort_split_combine(centroids):
+    # Convert the centroids dictionary to a list of tuples (label, (x, y))
+    centroids_list = list(centroids.items())
+
+    # Step 2: Sort by x-coordinate
+    sorted_by_x = sorted(centroids_list, key=lambda item: item[1][0])
+    
+    # Step 3: Split into two halves
+    mid_point = len(sorted_by_x) // 2
+    first_half = sorted_by_x[:mid_point]
+    second_half = sorted_by_x[mid_point:]
+    
+    # Step 4: Sort each half by y-coordinate
+    sorted_first_half = sorted(first_half, key=lambda item: item[1][1], reverse=True)  # Reverse for higher indexing
+    sorted_second_half = sorted(second_half, key=lambda item: item[1][1])
+
+    # Combine the halves, with the first half first
+    combined_sorted = sorted_first_half + sorted_second_half
+    
+    # Assign new indices based on this combined order
+    new_order = {item[0]: index+1 for index, item in enumerate(combined_sorted)}  # +1 if indexing should start from 1
+
+    return new_order
+
+def calculate_centroids(image, num_tissue=8):
+    centroids = {}
+    for label in range(1, num_tissue + 1):  # Assuming labels from 1 to 8
+        positions = np.argwhere(image == label)
+        if positions.size == 0:  # If the label is not found in the image
+            continue
+        centroid = positions.mean(axis=0)
+        centroids[label] = (centroid[1], centroid[0])  # (x, y) format
+    return centroids
+
+def calculate_overlap(source_image, target_image, label, matched_list):
+    """
+    Calculate the overlap of a blob labeled 'label' in 'source_image' with
+    blobs in 'target_image'. Returns the label in 'target_image' with the highest overlap.
+    """
+
+    # matched_list = []
+
+    # Create a binary mask for the blob in the source image
+    source_mask = source_image == label
+    
+    # Initialize variables to track the maximum overlap
+    max_overlap = 0
+    max_label = None
+    
+    # Check overlap with each label in the target image
+    for target_label in np.unique(target_image):
+        if target_label == 0:  # Skip background
+            continue
+        
+        # Create a binary mask for the current blob in the target image
+        target_mask = target_image == target_label
+        
+        # Calculate overlap by counting the pixels where both masks are True
+        overlap = np.sum(source_mask & target_mask)
+        print(f"Overlap between source label {label} and target label {target_label}: {overlap}")
+        
+        # Update max overlap and corresponding label
+        if overlap > max_overlap and target_label not in matched_list:
+            max_overlap = overlap
+            max_label = target_label
+    
+    return max_label, max_overlap
+
+def find_matching_blob(centroid, target_image):
+    """
+    Find the blob in 'target_image' that overlaps with the given 'centroid'.
+    """
+    x, y = int(centroid[0]), int(centroid[1])
+    # Check if the centroid falls within a labeled blob in the target image
+    return target_image[y, x] if target_image[y, x] != 0 else None
+
 
 def propagate_labels(all_matches):
     """
@@ -941,6 +1060,7 @@ def extract_features(image):
         centroid_x = M['m10'] / M['m00']
         centroid_y = M['m01'] / M['m00']
         huMoments = cv2.HuMoments(M).flatten()
+        huMoments = np.sign(huMoments) * np.log10(np.abs(huMoments))
         
         # Eccentricity and Solidity
         (x, y), (MA, ma), angle = cv2.fitEllipse(largest_contour)
@@ -957,10 +1077,10 @@ def extract_features(image):
         contour_complex = largest_contour[:, 0, 0] + 1j * largest_contour[:, 0, 1]
         fourier_result = fft(contour_complex)
         # Normalize and keep a fixed number of descriptors
-        fourier_descriptors = np.abs(fourier_result[:5]) / np.abs(fourier_result[1])
+        fourier_descriptors = np.abs(fourier_result[:10]) / np.abs(fourier_result[0])
 
         # Combine all features into a single vector
-        features[label] = np.hstack([area, centroid_x, centroid_y, huMoments, eccentricity, solidity, perimeter, compactness, fourier_descriptors])
+        features[label] = np.hstack([huMoments, solidity, eccentricity, area, centroid_x, centroid_y, perimeter, compactness])
         
     return features
 
@@ -1138,7 +1258,7 @@ if __name__ == "__main__":
     p.add_argument('--kernel_size', type=int, default=10, help='Size of the structuring element used for closing, default is 0')
     p.add_argument('--holes_thresh', type=int, default=2000, help='Area threshold for removing small holes, default is 300')
     p.add_argument('--scale_factor', type=int, default=10, help='Scale factor for downsample, default is 10')
-    p.add_argument('--padding', type=int, default=20, help='Padding for bounding box, default is 20')
+    p.add_argument('--padding', type=int, default=50, help='Padding for bounding box, default is 20')
     p.add_argument('--connect', type=int, default=2, help='Connectivity for connected components, default is 2')
     p.add_argument('--pixel_size', type=list, default=[0.5073519424785282, 0.5073519424785282], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
     # p.add_argument('--pixel_size', type=list, default=[4.058815539828226, 4.058815539828226], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
