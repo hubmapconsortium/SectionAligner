@@ -643,10 +643,11 @@ def crop_imgs(imgs, bbox, centroids, padding, filtered_imgs, upsample_factor, sf
             x1, y1, x2, y2 = create_bounding_box(cX, cY, w, h, img, padding, sfx, sfy, scale=True)
 
 
+            mask = filtered_imgs[i][j]
             #close blob of filtered image - #25 kernel size before
-            mask = close_blob(filtered_imgs[i][j], kernel_size=kernel_size)
-            #dilate filtered image
-            mask = morphological_operation(mask, kernel_size=kernel_size, operation='dilation')
+            # mask = close_blob(mask, kernel_size=kernel_size)
+            # #dilate filtered image
+            # mask = morphological_operation(mask, kernel_size=kernel_size, operation='dilation')
 
             # if scale is True
             #use upsample mask on original image
@@ -1139,8 +1140,8 @@ if __name__ == "__main__":
     p.add_argument('--scale_factor', type=int, default=10, help='Scale factor for downsample, default is 10')
     p.add_argument('--padding', type=int, default=20, help='Padding for bounding box, default is 20')
     p.add_argument('--connect', type=int, default=2, help='Connectivity for connected components, default is 2')
-    # p.add_argument('--pixel_size', type=list, default=[0.5073519424785282, 0.5073519424785282], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
-    p.add_argument('--pixel_size', type=list, default=[4.058815539828226, 4.058815539828226], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
+    p.add_argument('--pixel_size', type=list, default=[0.5073519424785282, 0.5073519424785282], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
+    # p.add_argument('--pixel_size', type=list, default=[4.058815539828226, 4.058815539828226], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
     p.add_argument('--output_folder', type=str, default='./outputs', help='Output folder for saving images, default is outputs')
     p.add_argument('--input_folder', type=str, default='raw_data', help='Input folder for reading images, default is inputs')
     p.add_argument('--output_file_basename', type=str, default='aligned_tissue', help='Output file basename, default is aligned_tissue')
