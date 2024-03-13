@@ -39,12 +39,12 @@ def main(
 ):
 
     start_begin = time.time()
-    # img_dir = Path(input_folder)
+    img_dir = Path(input_folder)
 
     # in hive
     # img_dir = Path('raw_data')
     # local
-    img_dir = Path('raw_data/IMGS')
+    # img_dir = Path('raw_data/IMGS')
 
 
     with open('raw_data/channelnames.txt', 'r') as file:
@@ -1132,7 +1132,7 @@ if __name__ == "__main__":
 
     p = ArgumentParser()
     p.add_argument('--num_tissue', type=int, default=8, help='Number of tissues to detect, default is 8')
-    p.add_argument('--level', type=int, default=3, help='Pyrmaid level of the image, default is 0 which is the original image size')
+    p.add_argument('--level', type=int, default=0, help='Pyrmaid level of the image, default is 0 which is the original image size')
     p.add_argument('--thresh', type=int, default=None, help='Threshold value for binarization, default is done by otsu')
     p.add_argument('--kernel_size', type=int, default=10, help='Size of the structuring element used for closing, default is 0')
     p.add_argument('--holes_thresh', type=int, default=2000, help='Area threshold for removing small holes, default is 300')
