@@ -678,6 +678,10 @@ def crop_imgs(imgs, bbox, centroids, padding, filtered_imgs, upsample_factor, sf
             opened_image = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_2)
             mask = cv2.bitwise_not(opened_image)
 
+            #erode image a bit to not include noise around the tissue
+            mask = morphological_operation(mask, kernel_size=kernel_size / 2, operation='erosion', its=1)
+
+
             # if scale is True
             #use upsample mask on original image
             upsampled_mask = upsample_image(mask, sfx, sfy)
@@ -1292,8 +1296,8 @@ if __name__ == "__main__":
     p.add_argument('--scale_factor', type=int, default=8, help='Scale factor for downsample, default is 10')
     p.add_argument('--padding', type=int, default=50, help='Padding for bounding box, default is 20')
     p.add_argument('--connect', type=int, default=2, help='Connectivity for connected components, default is 2')
-    # p.add_argument('--pixel_size', type=list, default=[0.5073519424785282, 0.5073519424785282], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
-    p.add_argument('--pixel_size', type=list, default=[4.058815539828226, 4.058815539828226], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
+    p.add_argument('--pixel_size', type=list, default=[0.5073519424785282, 0.5073519424785282], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
+    # p.add_argument('--pixel_size', type=list, default=[4.058815539828226, 4.058815539828226], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
     p.add_argument('--output_folder', type=str, default='./outputs', help='Output folder for saving images, default is outputs')
     p.add_argument('--input_folder', type=str, default='raw_data', help='Input folder for reading images, default is inputs')
     p.add_argument('--output_file_basename', type=str, default='aligned_tissue', help='Output file basename, default is aligned_tissue')
