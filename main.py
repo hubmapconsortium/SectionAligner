@@ -20,7 +20,7 @@ from sklearn.preprocessing import StandardScaler
 from numpy.fft import fft
 
 # CONST_PIXEL_SIZE_FOR_OPERATIONS = 0.5073519424785282 * 10 #microns
-CONST_PIXEL_SIZE_FOR_OPERATIONS = 4.058815539828226 * 10 #microns
+CONST_PIXEL_SIZE_FOR_OPERATIONS = 4.058815539828226
 
 def main(
     num_tissue: int,
@@ -118,28 +118,47 @@ def main(
 
     # close images
     closed_imgs = [morphological_operation(img, kernel_size, 'closing') for img in binary_imgs]
-    filled_imgs = [morphology.remove_small_holes(img, area_threshold=holes_thresh) for img in closed_imgs] 
-    filled_imgs = [(img * 255).astype(np.uint8) for img in filled_imgs]
 
-    # image opening
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(3,3))
-    opened_imgs = [cv2.morphologyEx(img, cv2.MORPH_OPEN, kernel) for img in filled_imgs]
+    #erosion to prevent connected components from merging
+    eroded_imgs = [morphological_operation(img, kernel_size, 'erosion') for img in closed_imgs]
+
+    # Dilate the image
+    dilated_imgs = [morphological_operation(img, int(kernel_size/10), 'dilation', its=2) for img in eroded_imgs]
+
+    # Erode the dilated image
+    eroded_imgs_2 = [morphological_operation(img, int(kernel_size/10), 'erode', its=2) for img in dilated_imgs]
+
+    # filled_imgs = [morphology.remove_small_holes(img, area_threshold=holes_thresh) for img in eroded_imgs] 
+    # filled_imgs = [(img * 255).astype(np.uint8) for img in filled_imgs]
+    # filled_imgs = [morphology.remove_small_holes(img, area_threshold=holes_thresh*2) for img in closed_imgs] 
+    # filled_imgs = [(img * 255).astype(np.uint8) for img in filled_imgs]
 
     # dilate image then close
-    dilated_imgs = [morphological_operation(img, 0, 'dilation') for img in opened_imgs]
-    closed_imgs_2 = [morphological_operation(img, kernel_size, 'closing') for img in dilated_imgs]
+    # dilated_imgs_2 = [morphological_operation(img, kernel_size, 'dilation') for img in eroded_imgs]
+    # closed_imgs_2 = [morphological_operation(img, kernel_size, 'closing') for img in dilated_imgs_2]
+
+    # image opening
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(30,30))
+    opened_imgs = [cv2.morphologyEx(img, cv2.MORPH_OPEN, kernel) for img in eroded_imgs_2]
+
+    # dilate image then close
+    # dilated_imgs_2 = [morphological_operation(img, 0, 'dilation') for img in opened_imgs]
+    # eroded_imgs_3 = [morphological_operation(img, 0, 'erosion') for img in dilated_imgs_2]
+    # dilated_imgs_3 = [morphological_operation(img, 0, 'dilation') for img in eroded_imgs_3]
+    closed_imgs_2 = [morphological_operation(img, int(kernel_size * 2), 'closing') for img in opened_imgs]
 
     # remove holes again
-    filled_imgs_2 = [morphology.remove_small_holes(img, area_threshold=holes_thresh) for img in closed_imgs_2]
-    filled_imgs_2 = [(img * 255).astype(np.uint8) for img in filled_imgs_2]
+    # filled_imgs_2 = [morphology.remove_small_holes(img, area_threshold=holes_thresh) for img in closed_imgs_2]
+    # filled_imgs_2 = [(img * 255).astype(np.uint8) for img in filled_imgs_2]
 
-    # erode image
-    eroded_imgs = [morphological_operation(img, kernel_size, 'erosion') for img in filled_imgs_2]
+    # # erode image to remove connected tissues that may have formed
+    # eroded_imgs_3 = [morphological_operation(img, int(kernel_size / 10), 'erosion', its=2) for img in closed_imgs_2]
 
-    # dilate image back
-    dilated_imgs_2 = [morphological_operation(img, kernel_size, 'dilation') for img in eroded_imgs]
-    processed_imgs = [morphological_operation(img, int(kernel_size / 2), 'dilation') for img in dilated_imgs_2]
+    # # # dilate image back
+    processed_imgs = [morphological_operation(img, kernel_size, 'dilation') for img in closed_imgs_2]
+    # dilated_imgs_3 = [morphological_operation(img, int(kernel_size / 10), 'dilation', its=2) for img in eroded_imgs_3]
 
+    ##################################################################################################################
     connected_comp_imgs = [cv2.connectedComponentsWithStats(img, connect, cv2.CV_32S) for img in processed_imgs]
 
     print('Time to Preprocess images:', time.time() - start)
@@ -347,8 +366,8 @@ def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
             keypoints, descriptors = sift.detectAndCompute(current_slice, None)
 
             #print keypoints and descriptors
-            print(f"Keypoints: {len(keypoints)}")
-            print(f"Descriptors: {descriptors.shape}")
+            # print(f"Keypoints: {len(keypoints)}")
+            # print(f"Descriptors: {descriptors.shape}")
 
             # Match descriptors
             matches = flann.knnMatch(descriptors_ref, descriptors, k=2)
@@ -369,7 +388,7 @@ def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
                 aligned_slice = cv2.warpPerspective(image_4d[z].transpose(1, 2, 0), M, (image_4d.shape[3], image_4d.shape[2]))
 
                 #print M
-                print(f"Homography matrix for slice {z}: {M}")
+                # print(f"Homography matrix for slice {z}: {M}")
             except Exception as e:
                 print(e)
                 return None
@@ -651,6 +670,13 @@ def crop_imgs(imgs, bbox, centroids, padding, filtered_imgs, upsample_factor, sf
 
             #erode image a bit to not include noise around the tissue
             # mask = morphological_operation(mask, kernel_size=kernel_size, operation='erosion')
+
+            #remove holes
+
+            mask = cv2.bitwise_not(mask)
+            kernel_2 = np.ones((300, 300), np.uint8)
+            opened_image = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_2)
+            mask = cv2.bitwise_not(opened_image)
 
             # if scale is True
             #use upsample mask on original image
@@ -1180,16 +1206,16 @@ def remove_islands_and_small_blobs(image, noise_reduction_size=3, blob_size=3):
     return opened
 
 
-def morphological_operation(img, kernel_size, operation):
+def morphological_operation(img, kernel_size, operation, its=1):
     kernel = np.ones((kernel_size, kernel_size), np.uint8)
     if operation == 'opening':
         return cv2.morphologyEx(img, cv2.MORPH_OPEN, kernel)
     elif operation == 'closing':
         return cv2.morphologyEx(img, cv2.MORPH_CLOSE, kernel)
     elif operation == 'dilation':
-        return cv2.dilate(img, kernel, iterations=1)
+        return cv2.dilate(img, kernel, iterations=its)
     elif operation == 'erosion':
-        return cv2.erode(img, kernel, iterations=1)
+        return cv2.erode(img, kernel, iterations=its)
     else:
         return img
 
@@ -1202,6 +1228,12 @@ def plot_img_from_list(img_list):
     for i, img in enumerate(img_list):
         ax[i].imshow(img, cmap='gray')
         ax[i].axis('off')
+    plt.tight_layout()
+    plt.show()
+
+def plot_img(img):
+    plt.figure()
+    plt.imshow(img)
     plt.tight_layout()
     plt.show()
 
@@ -1255,13 +1287,13 @@ if __name__ == "__main__":
     p.add_argument('--num_tissue', type=int, default=8, help='Number of tissues to detect, default is 8')
     p.add_argument('--level', type=int, default=0, help='Pyrmaid level of the image, default is 0 which is the original image size')
     p.add_argument('--thresh', type=int, default=None, help='Threshold value for binarization, default is done by otsu')
-    p.add_argument('--kernel_size', type=int, default=10, help='Size of the structuring element used for closing, default is 0')
-    p.add_argument('--holes_thresh', type=int, default=2000, help='Area threshold for removing small holes, default is 300')
-    p.add_argument('--scale_factor', type=int, default=10, help='Scale factor for downsample, default is 10')
+    p.add_argument('--kernel_size', type=int, default=100, help='Size of the structuring element used for closing, default is 0')
+    p.add_argument('--holes_thresh', type=int, default=5000, help='Area threshold for removing small holes, default is 300')
+    p.add_argument('--scale_factor', type=int, default=8, help='Scale factor for downsample, default is 10')
     p.add_argument('--padding', type=int, default=50, help='Padding for bounding box, default is 20')
     p.add_argument('--connect', type=int, default=2, help='Connectivity for connected components, default is 2')
-    p.add_argument('--pixel_size', type=list, default=[0.5073519424785282, 0.5073519424785282], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
-    # p.add_argument('--pixel_size', type=list, default=[4.058815539828226, 4.058815539828226], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
+    # p.add_argument('--pixel_size', type=list, default=[0.5073519424785282, 0.5073519424785282], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
+    p.add_argument('--pixel_size', type=list, default=[4.058815539828226, 4.058815539828226], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
     p.add_argument('--output_folder', type=str, default='./outputs', help='Output folder for saving images, default is outputs')
     p.add_argument('--input_folder', type=str, default='raw_data', help='Input folder for reading images, default is inputs')
     p.add_argument('--output_file_basename', type=str, default='aligned_tissue', help='Output file basename, default is aligned_tissue')
