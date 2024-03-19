@@ -679,7 +679,7 @@ def crop_imgs(imgs, bbox, centroids, padding, filtered_imgs, upsample_factor, sf
             mask = cv2.bitwise_not(opened_image)
 
             #erode image a bit to not include noise around the tissue
-            # mask = morphological_operation(mask, kernel_size=kernel_size / 2, operation='erosion', its=1)
+            mask = morphological_operation(mask, kernel_size=int(kernel_size / 2), operation='erosion', its=1)
 
 
             # if scale is True
