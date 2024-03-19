@@ -171,7 +171,7 @@ def main(
     print('Time to Detect tissues:', time.time() - start)
 
     ### COLOR LABEL IMAGES ###
-    # save_arrays_as_images(full_labels, use_colormap=True, output_folder='figures', file_prefix="labels", file_extension=".png")
+    save_arrays_as_images(full_labels, use_colormap=True, output_folder=output_folder, file_prefix="labels", file_extension=".png")
     ##########################
 
     #Match overlap of filtered images so that the same tissues are matching
