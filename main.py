@@ -138,7 +138,7 @@ def main(
     # closed_imgs_2 = [morphological_operation(img, kernel_size, 'closing') for img in dilated_imgs_2]
 
     # image opening
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(30,30))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(kernel_size * 0.3, kernel_size * 0.3))
     opened_imgs = [cv2.morphologyEx(img, cv2.MORPH_OPEN, kernel) for img in eroded_imgs_2]
 
     # dilate image then close
@@ -672,9 +672,8 @@ def crop_imgs(imgs, bbox, centroids, padding, filtered_imgs, upsample_factor, sf
             # mask = morphological_operation(mask, kernel_size=kernel_size, operation='erosion')
 
             #remove holes
-
             mask = cv2.bitwise_not(mask)
-            kernel_2 = np.ones((300, 300), np.uint8)
+            kernel_2 = np.ones((kernel_size * 3, kernel_size * 3), np.uint8)
             opened_image = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_2)
             mask = cv2.bitwise_not(opened_image)
 
