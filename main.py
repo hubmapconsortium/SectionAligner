@@ -138,7 +138,7 @@ def main(
     # closed_imgs_2 = [morphological_operation(img, kernel_size, 'closing') for img in dilated_imgs_2]
 
     # image opening
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(kernel_size * 0.3, kernel_size * 0.3))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(int(kernel_size * 0.3), int(kernel_size * 0.3)))
     opened_imgs = [cv2.morphologyEx(img, cv2.MORPH_OPEN, kernel) for img in eroded_imgs_2]
 
     # dilate image then close
@@ -679,6 +679,10 @@ def crop_imgs(imgs, bbox, centroids, padding, filtered_imgs, upsample_factor, sf
 
             #erode image a bit to not include noise around the tissue
             mask = morphological_operation(mask, kernel_size=int(kernel_size / 2), operation='erosion', its=1)
+
+            #print number of pixels before and after these morphological operations
+            print(f"Number of pixels before morphological operations: {np.sum(filtered_imgs[i][j])}")
+            print(f"Number of pixels after morphological operations: {np.sum(mask)}")
 
 
             # if scale is True
