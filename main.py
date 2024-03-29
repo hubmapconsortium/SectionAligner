@@ -738,8 +738,11 @@ def crop_imgs(imgs, bbox, centroids, padding, filtered_imgs, upsample_factor, sf
 
 def process_tissue(cropped_img, thresh, kernel_size, connect=2):
 
-    img_2D = np.sum(cropped_img, dtype=np.uint8)
-    img_2D_thresh = img_2D > thresh
+    #set new kernel_size
+    kernel_size = int(kernel_size / 5)
+
+    img_2D = np.sum(cropped_img, axis=0)
+    img_2D_thresh = ((img_2D > thresh) * 255).astype(np.uint8)
 
     #first round
     closed_img = morphological_operation(img_2D_thresh, kernel_size, 'closing')
@@ -750,10 +753,15 @@ def process_tissue(cropped_img, thresh, kernel_size, connect=2):
     open_img = morphological_operation(dilated_img, kernel_size, 'opening')
     closed_img_2 = morphological_operation(open_img, kernel_size, 'closing')
 
-    processed_img = morphological_operation(closed_img_2, kernel_size, 'dilation')
+    processed_img = morphological_operation(closed_img_2, int(kernel_size * 2), 'dilation')
+
+    #remove small holes
+    hole_thresh = int(processed_img.shape[0] * processed_img.shape[1] / 100) 
+    processed_img_final = morphology.remove_small_holes(processed_img, area_threshold=hole_thresh)
+    processed_img_final = (processed_img_final * 255).astype(np.uint8)
 
     #connected components
-    cc_img = cv2.connectedComponentsWithStats(processed_img, connect, cv2.CV_32S)
+    cc_img = cv2.connectedComponentsWithStats(processed_img_final, connect, cv2.CV_32S)
 
     num_labels = cc_img[0]  # The first cell is the number of labels
     labels = cc_img[1]  # The second cell is the label matrix itself
@@ -1329,15 +1337,15 @@ if __name__ == "__main__":
 
     p = ArgumentParser()
     p.add_argument('--num_tissue', type=int, default=8, help='Number of tissues to detect, default is 8')
-    p.add_argument('--level', type=int, default=3, help='Pyrmaid level of the image, default is 0 which is the original image size')
+    p.add_argument('--level', type=int, default=0, help='Pyrmaid level of the image, default is 0 which is the original image size')
     p.add_argument('--thresh', type=int, default=None, help='Threshold value for binarization, default is done by otsu')
     p.add_argument('--kernel_size', type=int, default=100, help='Size of the structuring element used for closing, default is 0')
     p.add_argument('--holes_thresh', type=int, default=5000, help='Area threshold for removing small holes, default is 300')
-    p.add_argument('--scale_factor', type=int, default=1, help='Scale factor for downsample, default is 10')
+    p.add_argument('--scale_factor', type=int, default=8, help='Scale factor for downsample, default is 10')
     p.add_argument('--padding', type=int, default=50, help='Padding for bounding box, default is 20')
     p.add_argument('--connect', type=int, default=2, help='Connectivity for connected components, default is 2')
-    # p.add_argument('--pixel_size', type=list, default=[0.5073519424785282, 0.5073519424785282], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
-    p.add_argument('--pixel_size', type=list, default=[4.058815539828226, 4.058815539828226], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
+    p.add_argument('--pixel_size', type=list, default=[0.5073519424785282, 0.5073519424785282], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
+    # p.add_argument('--pixel_size', type=list, default=[4.058815539828226, 4.058815539828226], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
     p.add_argument('--output_folder', type=str, default='./outputs', help='Output folder for saving images, default is outputs')
     p.add_argument('--input_folder', type=str, default='raw_data', help='Input folder for reading images, default is inputs')
     p.add_argument('--output_file_basename', type=str, default='aligned_tissue', help='Output file basename, default is aligned_tissue')
