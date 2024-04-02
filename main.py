@@ -18,6 +18,8 @@ from skimage.filters import threshold_multiotsu
 from scipy.spatial.distance import cdist
 from sklearn.preprocessing import StandardScaler
 from numpy.fft import fft
+from scipy import stats
+import json
 
 # CONST_PIXEL_SIZE_FOR_OPERATIONS = 0.5073519424785282 * 10 #microns
 CONST_PIXEL_SIZE_FOR_OPERATIONS = 4.058815539828226
@@ -35,7 +37,8 @@ def main(
     pixel_size: list,
     output_folder: str,
     input_folder: str,
-    file_basename: str
+    file_basename: str,
+    optimize: bool
 ):
 
     start_begin = time.time()
@@ -214,11 +217,21 @@ def main(
             physical_pixel_sizes=pps,
         )
 
-        # Normal alignment
-        aligned_tissue = align_z_slices(img, ref_slices[i])
+        # OPTUNA - hyperparameter tuning
+        if optimize:
+            optimize_sift_parameters(summed_channels, output_folder, ref_slices[i])
+            continue
+    
 
 
-        dice_list, d_avg, area_consist = calculate_metrics(aligned_tissue)
+        # Normal alignment using dapi
+        # aligned_tissue, average_dice = align_z_slices(img, ref_slices[i])
+
+        # alignment using summed channels
+        aligned_tissue, average_dice = align_z_slices(summed_channels, img, ref_slices[i])
+
+
+        dice_list, d_avg, area_consist = calculate_metrics(aligned_tissue, ref_slices[i])
         print(f"Average Dice coefficient: {d_avg}")
         print(f"Average Area consistency: {area_consist}")
 
@@ -236,8 +249,6 @@ def main(
 
         aligned_tissue_list.append(aligned_tissue)
 
-        # OPTUNA - hyperparameter tuning
-        # optimize_sift_parameters(img)
     
     print('Time to Align images:', time.time() - start)
 
@@ -281,7 +292,7 @@ def main(
 
 
 
-def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
+def align_z_slices(summed_channel, image_4d, reference_z=0, align_channel=0, params=None):
     """
     Align all z-slices in a 4D image array to a reference z-slice.
 
@@ -323,14 +334,18 @@ def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
     # ref_slice = np.sum(image_4d[reference_z].transpose(1, 2, 0), axis=2)
     # ref_slice = np.mean(image_4d[reference_z], axis=0).astype(np.uint8)
 
+    
 
-
-    #one channel
-    ref_slice = image_4d[reference_z, align_channel].astype(np.uint8)
-    binary_ref = generate_binary_mask(ref_slice)
+    #one channel - dapi
+    # ref_slice = image_4d[reference_z, align_channel].astype(np.uint8)
+    # binary_ref = generate_binary_mask(ref_slice)
 
     #otsu filter for threshold
     # _, ref_slice = cv2.threshold(ref_slice, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    #summed channels method
+    ref_slice = summed_channel[reference_z]
+    binary_ref = generate_binary_mask(ref_slice)
 
     keypoints_ref, descriptors_ref = sift.detectAndCompute(ref_slice, None)
 
@@ -345,6 +360,9 @@ def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
     # Initialize an empty array for the aligned z-slices
     aligned_image_4d = np.zeros_like(image_4d)
 
+    #get average dice
+    average_dice = []
+
     # Align each z-slice to the reference
     for z in range(image_4d.shape[0]):
         if z != reference_z:
@@ -355,10 +373,12 @@ def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
             # current_slice = np.sum(image_4d[z].transpose(1, 2, 0), axis=2)
 
             #one channel
-            current_slice = image_4d[z, align_channel].astype(np.uint8)
+            # current_slice = image_4d[z, align_channel].astype(np.uint8)
 
             #all channels
             # current_slice = convert_to_grayscale_sum(image_4d[z])
+            # current_slice = image_4d[z]
+            current_slice = summed_channel[z]
 
             #otsu filter for threshold
             # _, current_slice = cv2.threshold(current_slice, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
@@ -403,16 +423,18 @@ def align_z_slices(image_4d, reference_z=0, align_channel=0, params=None):
             # descriptors_ref = descriptors
 
             #check dice coeff against ref   
-            binary_slice = generate_binary_mask(aligned_image_4d[z, align_channel])
+            # binary_slice = generate_binary_mask(aligned_image_4d[z, align_channel])
+            binary_slice = generate_binary_mask(summed_channel[z])
             intersection = np.logical_and(binary_ref, binary_slice)
             dice = 2. * intersection.sum() / (binary_ref.sum() + binary_slice.sum())
             print(f"For reference slice {reference_z} and current slice {z} the dice coeff: {dice}")
+            average_dice.append(dice)
 
         else:
             # Copy the reference slice as-is
             aligned_image_4d[z] = image_4d[z]
 
-    return aligned_image_4d
+    return aligned_image_4d, np.mean(average_dice)
 
 def generate_binary_mask(image, threshold=30):
     """
@@ -433,14 +455,16 @@ def generate_binary_mask(image, threshold=30):
 
     return binary_mask
 
-def objective(trial, image_4d):
+def objective(trial, image_4d, ref_slices):
     # Define the range of values for each parameter you want to optimize
     n_features = trial.suggest_int('n_features', 0, 1000)
     contrast_threshold = trial.suggest_float('contrast_threshold', 0.01, 0.1)
-    edge_threshold = trial.suggest_float('edge_threshold', 10, 20)
-    sigma = trial.suggest_float('sigma', 1.0, 2.0)
+    edge_threshold = trial.suggest_float('edge_threshold', 2, 15)
+    sigma = trial.suggest_float('sigma', 0, 2.0)
     n_octave_layers = trial.suggest_int('n_octave_layers', 1, 10)
     ratio_threshold = trial.suggest_float('ratio_threshold', 0.5, 0.9)
+    flann_check = trial.suggest_int('flann_check', 100, 500)
+    flann_trees = trial.suggest_int('flann_trees', 5, 50)
 
     #put parameters in a dictionary
     params = {
@@ -449,7 +473,10 @@ def objective(trial, image_4d):
         'contrast_threshold': contrast_threshold,
         'edge_threshold': edge_threshold,
         'sigma': sigma,
-        'ratio_threshold': ratio_threshold
+        'ratio_threshold': ratio_threshold,
+        'flann_check': flann_check,
+        'flann_trees': flann_trees
+
     }
 
     # Initialize SIFT with suggested parameters
@@ -457,25 +484,51 @@ def objective(trial, image_4d):
 
     # Perform alignment using the current SIFT configuration
     # Note: You'll need to modify your alignment function to accept the `sift` parameter
-    aligned_image_4d = align_z_slices(image_4d, params=params)
+    aligned_image_4d, average_dice = align_z_slices(image_4d, ref_slices, params=params)
     
     # Evaluate alignment quality
-    _, average_dice = calculate_metrics(aligned_image_4d)
+    # _, average_dice, _ = calculate_metrics(aligned_image_4d)
     
     # Since Optuna minimizes the objective, return a negative value of the metric if higher is better
     return average_dice
 
 
 # Example usage
-def optimize_sift_parameters(image_4d):
+def optimize_sift_parameters(image_4d, output_dir, ref_slices, image_index):
     study = optuna.create_study(direction='maximize')
-    study.optimize(lambda trial: objective(trial, image_4d), n_trials=100)  # Adjust n_trials to your preference
+    study.optimize(lambda trial: objective(trial, image_4d, ref_slices), n_trials=100)  # Adjust n_trials to your preference
 
     
     print('Number of finished trials:', len(study.trials))
     print('Best trial:', study.best_trial.params)
 
-def calculate_metrics(aligned_image_4d, align_channel=0, threshold=30):
+    trials_data = []
+    # Detailed logging of all trials
+    for trial in study.trials:
+        print(f"Trial {trial.number}, Value: {trial.value}")
+        print(f" Parameters: {trial.params}")
+        # If you have user attributes or other specific data to log, you can access them like this:
+        # print(f" User Attributes: {trial.user_attrs}")
+        print("-------------")
+
+        trial_data = {
+            'number': trial.number,
+            'value': trial.value,
+            'params': trial.params,
+            # Include any other trial information you need
+            # 'user_attrs': trial.user_attrs,
+            # 'system_attrs': trial.system_attrs,
+        }
+        trials_data.append(trial_data)
+    
+    # Serialize to JSON and save to file
+    with open(f'{output_dir}/optuna_trials_image_{image_index}.json', 'w') as f:
+        json.dump(trials_data, f, indent=4)
+
+    print('All trials have been saved to optuna_trials.json.')
+
+
+def calculate_metrics(aligned_image_4d, ref_slice, align_channel=0, threshold=30):
     """
     Calculate the Dice coefficient and area consistency between consecutive slices in a 4D image array
     after converting each slice into a binary image.
@@ -487,7 +540,7 @@ def calculate_metrics(aligned_image_4d, align_channel=0, threshold=30):
     """
 
     if aligned_image_4d is None:
-        return [], 0
+        return [], 0, 0
 
     dice_coefficients = []
     area_consistency = []
@@ -674,7 +727,7 @@ def crop_imgs(imgs, bbox, centroids, padding, filtered_imgs, upsample_factor, sf
             # mask = cv2.bitwise_not(opened_image)
 
             #erode image a bit to not include noise around the tissue
-            # mask = morphological_operation(mask, kernel_size=int(kernel_size * 2), operation='erosion', its=1)
+            mask = morphological_operation(mask, kernel_size=int(kernel_size * 2), operation='erosion', its=1)
 
             #print number of pixels before and after these morphological operations
             # print(f"Number of pixels before morphological operations: {np.sum(filtered_imgs[i][j])}")
@@ -683,15 +736,18 @@ def crop_imgs(imgs, bbox, centroids, padding, filtered_imgs, upsample_factor, sf
 
             # if scale is True
             #use upsample mask on original image
-            # upsampled_mask = upsample_image(mask, sfx, sfy)
-            # upsampled_mask = (upsampled_mask > 0).astype(np.uint8) #convert to [0, 1]
+            upsampled_mask = upsample_image(mask, sfx, sfy)
+            upsampled_mask = (upsampled_mask > 0).astype(np.uint8) #convert to [0, 1]
 
             #crop image and mask first to save memory
             new_img = img[:, y1:y2, x1:x2]
-            # upsampled_mask = upsampled_mask[y1:y2, x1:x2]
+            upsampled_mask = upsampled_mask[y1:y2, x1:x2]
+
+            # new_cX = abs(x1 - x2) / 2
+            # new_cY = abs(y1 - y2) / 2
 
             #create new mask
-            mask = process_tissue(new_img, thresh[i], kernel_size)
+            mask = process_tissue(new_img, thresh[i], kernel_size, upsampled_mask, connect=2)
 
 
             #apply mask to original image
@@ -736,7 +792,7 @@ def crop_imgs(imgs, bbox, centroids, padding, filtered_imgs, upsample_factor, sf
     
     return cropped_slices
 
-def process_tissue(cropped_img, thresh, kernel_size, connect=2):
+def process_tissue(cropped_img, thresh, kernel_size, up_mask, connect=2):
 
     #set new kernel_size
     kernel_size = int(kernel_size / 5)
@@ -763,20 +819,29 @@ def process_tissue(cropped_img, thresh, kernel_size, connect=2):
     #connected components
     cc_img = cv2.connectedComponentsWithStats(processed_img_final, connect, cv2.CV_32S)
 
-    num_labels = cc_img[0]  # The first cell is the number of labels
+    # num_labels = cc_img[0]  # The first cell is the number of labels
     labels = cc_img[1]  # The second cell is the label matrix itself
-    stats = cc_img[2]  # The third cell is the stat matrix
+    # stats = cc_img[2]  # The third cell is the stat matrix
 
-    nunique = np.unique(labels)
-    sort_stats = stats[:, cv2.CC_STAT_AREA].copy()
-    sort_stats.sort()
+    # nunique = np.unique(labels)
+    # sort_stats = stats[:, cv2.CC_STAT_AREA].copy()
+    # sort_stats.sort()
 
-    #get biggest piece
-    tissue_values = nunique[stats[:, cv2.CC_STAT_AREA] == sort_stats[-1]]
-    
-    mask = labels == tissue_values
+    #get biggest piece - not correct as there is a bug in which the noise is a bigger piece
+    # tissue_values = nunique[stats[:, cv2.CC_STAT_AREA] == sort_stats[-1]]
+    # tissue_value = labels[cY, cX]
+    masked_area = labels[up_mask > 0].flatten()
+    # foreground_values = masked_area[masked_area != 0].flatten()
+    tissue_value, _ = stats.mode(masked_area)
 
-    return mask
+    mask = labels == tissue_value[0]
+    mask = mask.astype(np.uint8)
+
+    #process the mask more for irregularities
+    mask_closed = morphological_operation(mask, kernel_size * 8, 'closing')
+    mask_final = morphology.remove_small_holes(mask_closed, area_threshold=hole_thresh)
+
+    return mask_final
 
 
 def create_bounding_box(cX, cY, width, height, img, padding, sfx, sfy, scale=True):
@@ -1285,7 +1350,7 @@ def plot_img_from_list(img_list):
 
 def plot_img(img):
     plt.figure()
-    plt.imshow(img)
+    plt.imshow(img, cmap='gray')
     plt.tight_layout()
     plt.show()
 
@@ -1337,19 +1402,20 @@ if __name__ == "__main__":
 
     p = ArgumentParser()
     p.add_argument('--num_tissue', type=int, default=8, help='Number of tissues to detect, default is 8')
-    p.add_argument('--level', type=int, default=0, help='Pyrmaid level of the image, default is 0 which is the original image size')
+    p.add_argument('--level', type=int, default=3, help='Pyrmaid level of the image, default is 0 which is the original image size')
     p.add_argument('--thresh', type=int, default=None, help='Threshold value for binarization, default is done by otsu')
     p.add_argument('--kernel_size', type=int, default=100, help='Size of the structuring element used for closing, default is 0')
     p.add_argument('--holes_thresh', type=int, default=5000, help='Area threshold for removing small holes, default is 300')
-    p.add_argument('--scale_factor', type=int, default=8, help='Scale factor for downsample, default is 10')
+    p.add_argument('--scale_factor', type=int, default=1, help='Scale factor for downsample, default is 10')
     p.add_argument('--padding', type=int, default=50, help='Padding for bounding box, default is 20')
     p.add_argument('--connect', type=int, default=2, help='Connectivity for connected components, default is 2')
-    p.add_argument('--pixel_size', type=list, default=[0.5073519424785282, 0.5073519424785282], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
-    # p.add_argument('--pixel_size', type=list, default=[4.058815539828226, 4.058815539828226], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
+    # p.add_argument('--pixel_size', type=list, default=[0.5073519424785282, 0.5073519424785282], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
+    p.add_argument('--pixel_size', type=list, default=[4.058815539828226, 4.058815539828226], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
     p.add_argument('--output_folder', type=str, default='./outputs', help='Output folder for saving images, default is outputs')
     p.add_argument('--input_folder', type=str, default='raw_data', help='Input folder for reading images, default is inputs')
     p.add_argument('--output_file_basename', type=str, default='aligned_tissue', help='Output file basename, default is aligned_tissue')
     p.add_argument('--align_upsample_factor', type=int, default=2, help='Upsample factor for aligning images, default is 2')
+    p.add_argument('--optimize', type=bool, default=True, help="optimize alignment parameters using optuna")
 
     args = p.parse_args()
 
@@ -1366,6 +1432,7 @@ if __name__ == "__main__":
         pixel_size = args.pixel_size,
         output_folder = args.output_folder,
         input_folder = args.input_folder,
-        file_basename = args.output_file_basename
+        file_basename = args.output_file_basename,
+        optimize= args.optimize
 
     )
