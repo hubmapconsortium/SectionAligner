@@ -219,7 +219,7 @@ def main(
 
         # OPTUNA - hyperparameter tuning
         if optimize:
-            optimize_sift_parameters(summed_channels, output_folder, ref_slices[i])
+            optimize_sift_parameters(summed_channels, img, output_folder, ref_slices[i], i)
             continue
     
 
@@ -248,6 +248,9 @@ def main(
 
 
         aligned_tissue_list.append(aligned_tissue)
+
+    if optimize:
+        exit()
 
     
     print('Time to Align images:', time.time() - start)
@@ -411,7 +414,7 @@ def align_z_slices(summed_channel, image_4d, reference_z=0, align_channel=0, par
                 # print(f"Homography matrix for slice {z}: {M}")
             except Exception as e:
                 print(e)
-                return None
+                return None, 0
                 
 
             # Apply the transformation to align the z-slice
@@ -455,7 +458,7 @@ def generate_binary_mask(image, threshold=30):
 
     return binary_mask
 
-def objective(trial, image_4d, ref_slices):
+def objective(trial, summed_channels, image_4d, ref_slices):
     # Define the range of values for each parameter you want to optimize
     n_features = trial.suggest_int('n_features', 0, 1000)
     contrast_threshold = trial.suggest_float('contrast_threshold', 0.01, 0.1)
@@ -484,7 +487,7 @@ def objective(trial, image_4d, ref_slices):
 
     # Perform alignment using the current SIFT configuration
     # Note: You'll need to modify your alignment function to accept the `sift` parameter
-    aligned_image_4d, average_dice = align_z_slices(image_4d, ref_slices, params=params)
+    _, average_dice = align_z_slices(summed_channels, image_4d, ref_slices, params=params)
     
     # Evaluate alignment quality
     # _, average_dice, _ = calculate_metrics(aligned_image_4d)
@@ -494,9 +497,9 @@ def objective(trial, image_4d, ref_slices):
 
 
 # Example usage
-def optimize_sift_parameters(image_4d, output_dir, ref_slices, image_index):
+def optimize_sift_parameters(summed_channels, image_4d, output_dir, ref_slices, image_index):
     study = optuna.create_study(direction='maximize')
-    study.optimize(lambda trial: objective(trial, image_4d, ref_slices), n_trials=100)  # Adjust n_trials to your preference
+    study.optimize(lambda trial: objective(trial, summed_channels, image_4d, ref_slices), n_trials=25)  # Adjust n_trials to your preference
 
     
     print('Number of finished trials:', len(study.trials))
@@ -1402,11 +1405,11 @@ if __name__ == "__main__":
 
     p = ArgumentParser()
     p.add_argument('--num_tissue', type=int, default=8, help='Number of tissues to detect, default is 8')
-    p.add_argument('--level', type=int, default=3, help='Pyrmaid level of the image, default is 0 which is the original image size')
+    p.add_argument('--level', type=int, default=0, help='Pyrmaid level of the image, default is 0 which is the original image size')
     p.add_argument('--thresh', type=int, default=None, help='Threshold value for binarization, default is done by otsu')
     p.add_argument('--kernel_size', type=int, default=100, help='Size of the structuring element used for closing, default is 0')
     p.add_argument('--holes_thresh', type=int, default=5000, help='Area threshold for removing small holes, default is 300')
-    p.add_argument('--scale_factor', type=int, default=1, help='Scale factor for downsample, default is 10')
+    p.add_argument('--scale_factor', type=int, default=8, help='Scale factor for downsample, default is 10')
     p.add_argument('--padding', type=int, default=50, help='Padding for bounding box, default is 20')
     p.add_argument('--connect', type=int, default=2, help='Connectivity for connected components, default is 2')
     # p.add_argument('--pixel_size', type=list, default=[0.5073519424785282, 0.5073519424785282], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
@@ -1415,7 +1418,7 @@ if __name__ == "__main__":
     p.add_argument('--input_folder', type=str, default='raw_data', help='Input folder for reading images, default is inputs')
     p.add_argument('--output_file_basename', type=str, default='aligned_tissue', help='Output file basename, default is aligned_tissue')
     p.add_argument('--align_upsample_factor', type=int, default=2, help='Upsample factor for aligning images, default is 2')
-    p.add_argument('--optimize', type=bool, default=True, help="optimize alignment parameters using optuna")
+    p.add_argument('--optimize', type=bool, default=False, help="optimize alignment parameters using optuna")
 
     args = p.parse_args()
 
