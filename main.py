@@ -21,6 +21,7 @@ from numpy.fft import fft
 from scipy import stats
 import json
 import os
+from ome_types import from_xml, to_xml
 
 # CONST_PIXEL_SIZE_FOR_OPERATIONS = 0.5073519424785282 * 10 #microns
 CONST_PIXEL_SIZE_FOR_OPERATIONS = 4.058815539828226
@@ -215,7 +216,13 @@ def main(
     if crop_only:
         for i, img in enumerate(img_list):
             metadata = img.ome_metadata
-            tiff.write(cropped_imgs[0][i], metadata=metadata)
+            ome_object = from_xml(metadata)
+            ome_xml = to_xml(ome_object)
+
+            with tiff.TiffWriter(f"{output_folder}/{file_basename}_{i}.ome.tif", bigtiff=True) as tif:
+                options = dict(metadata=None, description=ome_xml)
+                # tif.write(cropped_imgs[0][i], metadata=metadata)
+                tif.write(cropped_imgs[0][i], **options)
         
         exit()
 
