@@ -20,6 +20,7 @@ from sklearn.preprocessing import StandardScaler
 from numpy.fft import fft
 from scipy import stats
 import json
+import os
 
 # CONST_PIXEL_SIZE_FOR_OPERATIONS = 0.5073519424785282 * 10 #microns
 CONST_PIXEL_SIZE_FOR_OPERATIONS = 4.058815539828226
@@ -36,13 +37,29 @@ def main(
     connect: int, 
     pixel_size: list,
     output_folder: str,
-    input_folder: str,
+    input_path: str,
     file_basename: str,
-    optimize: bool
+    optimize: bool,
+    crop_only: bool
 ):
 
     start_begin = time.time()
-    img_dir = Path(input_folder)
+    input_path = Path(input_path)
+    img_list = []
+
+    if os.path.isdir(input_path):
+        img_dir = input_path
+
+        # Load images
+        img_list_sorted =  sorted(img_dir.glob('*.qptiff'), key=lambda x: x.name[:3].lower())
+        for img_path in img_list_sorted:
+            img_list.append(tiff.TiffFile(img_path))
+    elif os.path.isfile(input_path):
+        img_list.append(tiff.TiffFile(input_path))
+    else:
+        print(f"The path {input_path} does not exist.")
+        exit()
+        
 
     # in hive
     # img_dir = Path('raw_data')
@@ -77,10 +94,10 @@ def main(
     #time the process
     start = time.time()
     # Load images
-    img_list = []
-    img_list_sorted =  sorted(img_dir.glob('*.qptiff'), key=lambda x: x.name[:3].lower())
-    for img_path in img_list_sorted:
-        img_list.append(tiff.TiffFile(img_path))
+    # img_list = []
+    # img_list_sorted =  sorted(img_dir.glob('*.qptiff'), key=lambda x: x.name[:3].lower())
+    # for img_path in img_list_sorted:
+    #     img_list.append(tiff.TiffFile(img_path))
 
     img_arr = []
     for img in img_list:
@@ -195,7 +212,13 @@ def main(
     # crop images
     cropped_imgs = crop_imgs(img_arr, tissue_bbox, centroid_slices, padding, iso_imgs, align_upsample_factor, scale_factor_x, scale_factor_y, thresh, kernel_size, scale=True)
     # cropped_imgs = crop_imgs([img_arr[4]], tissue_bbox, [centroid_slices[4]], scale_factor, padding, [filtered_imgs[4]])
-    
+    if crop_only:
+        for i, img in enumerate(img_list):
+            metadata = img.ome_metadata
+            tiff.write(cropped_imgs[0][i], metadata=metadata)
+        
+        exit()
+
     # stack images
     stacked_imgs = stack_images(cropped_imgs)
     print('Time to Crop images and stack:', time.time() - start)
@@ -366,76 +389,81 @@ def align_z_slices(summed_channel, image_4d, reference_z=0, align_channel=0, par
     #get average dice
     average_dice = []
 
-    # Align each z-slice to the reference
-    for z in range(image_4d.shape[0]):
-        if z != reference_z:
-            # Convert z-slice to grayscale
-            # current_slice = convert_to_grayscale_sum(image_4d[z])
-            # current_slice = cv2.cvtColor(image_4d[z].transpose(1, 2, 0), cv2.COLOR_BGR2GRAY)
-            # current_slice = np.mean(image_4d[z], axis=0).astype(np.uint8)
-            # current_slice = np.sum(image_4d[z].transpose(1, 2, 0), axis=2)
+    try:
 
-            #one channel
-            # current_slice = image_4d[z, align_channel].astype(np.uint8)
+        # Align each z-slice to the reference
+        for z in range(image_4d.shape[0]):
+            if z != reference_z:
+                # Convert z-slice to grayscale
+                # current_slice = convert_to_grayscale_sum(image_4d[z])
+                # current_slice = cv2.cvtColor(image_4d[z].transpose(1, 2, 0), cv2.COLOR_BGR2GRAY)
+                # current_slice = np.mean(image_4d[z], axis=0).astype(np.uint8)
+                # current_slice = np.sum(image_4d[z].transpose(1, 2, 0), axis=2)
 
-            #all channels
-            # current_slice = convert_to_grayscale_sum(image_4d[z])
-            # current_slice = image_4d[z]
-            current_slice = summed_channel[z]
+                #one channel
+                # current_slice = image_4d[z, align_channel].astype(np.uint8)
 
-            #otsu filter for threshold
-            # _, current_slice = cv2.threshold(current_slice, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                #all channels
+                # current_slice = convert_to_grayscale_sum(image_4d[z])
+                # current_slice = image_4d[z]
+                current_slice = summed_channel[z]
 
-            keypoints, descriptors = sift.detectAndCompute(current_slice, None)
+                #otsu filter for threshold
+                # _, current_slice = cv2.threshold(current_slice, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-            #print keypoints and descriptors
-            # print(f"Keypoints: {len(keypoints)}")
-            # print(f"Descriptors: {descriptors.shape}")
+                keypoints, descriptors = sift.detectAndCompute(current_slice, None)
 
-            # Match descriptors
-            matches = flann.knnMatch(descriptors_ref, descriptors, k=2)
+                #print keypoints and descriptors
+                # print(f"Keypoints: {len(keypoints)}")
+                # print(f"Descriptors: {descriptors.shape}")
 
-            # Filter matches using Lowe's ratio test
-            # good_matches = [m for m, n in matches if m.distance < 0.75 * n.distance]
-            good_matches = [m for m, n in matches if m.distance < ratio_threshold * n.distance]
+                # Match descriptors
+                matches = flann.knnMatch(descriptors_ref, descriptors, k=2)
 
-            #print good matches
-            print(f"Good matches: {len(good_matches)}")
+                # Filter matches using Lowe's ratio test
+                # good_matches = [m for m, n in matches if m.distance < 0.75 * n.distance]
+                good_matches = [m for m, n in matches if m.distance < ratio_threshold * n.distance]
 
-            # Find homography matrix
-            src_pts = np.float32([keypoints[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-            dst_pts = np.float32([keypoints_ref[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+                #print good matches
+                print(f"Good matches: {len(good_matches)}")
 
-            try: 
-                M, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
-                aligned_slice = cv2.warpPerspective(image_4d[z].transpose(1, 2, 0), M, (image_4d.shape[3], image_4d.shape[2]))
+                # Find homography matrix
+                src_pts = np.float32([keypoints[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+                dst_pts = np.float32([keypoints_ref[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
 
-                #print M
-                # print(f"Homography matrix for slice {z}: {M}")
-            except Exception as e:
-                print(e)
-                return None, 0
-                
+                try: 
+                    M, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+                    aligned_slice = cv2.warpPerspective(image_4d[z].transpose(1, 2, 0), M, (image_4d.shape[3], image_4d.shape[2]))
 
-            # Apply the transformation to align the z-slice
-            aligned_image_4d[z] = aligned_slice.transpose(2, 0, 1)
+                    #print M
+                    # print(f"Homography matrix for slice {z}: {M}")
+                except Exception as e:
+                    print(e)
+                    return None, 0
+                    
 
-            # Update the keypoints and descriptors for the reference slice as the currrent aligned slice
-            # keypoints_ref, descriptors_ref = sift.detectAndCompute(aligned_image_4d[z, align_channel], None)
-            # keypoints_ref = keypoints
-            # descriptors_ref = descriptors
+                # Apply the transformation to align the z-slice
+                aligned_image_4d[z] = aligned_slice.transpose(2, 0, 1)
 
-            #check dice coeff against ref   
-            # binary_slice = generate_binary_mask(aligned_image_4d[z, align_channel])
-            binary_slice = generate_binary_mask(summed_channel[z])
-            intersection = np.logical_and(binary_ref, binary_slice)
-            dice = 2. * intersection.sum() / (binary_ref.sum() + binary_slice.sum())
-            print(f"For reference slice {reference_z} and current slice {z} the dice coeff: {dice}")
-            average_dice.append(dice)
+                # Update the keypoints and descriptors for the reference slice as the currrent aligned slice
+                # keypoints_ref, descriptors_ref = sift.detectAndCompute(aligned_image_4d[z, align_channel], None)
+                # keypoints_ref = keypoints
+                # descriptors_ref = descriptors
 
-        else:
-            # Copy the reference slice as-is
-            aligned_image_4d[z] = image_4d[z]
+                #check dice coeff against ref   
+                # binary_slice = generate_binary_mask(aligned_image_4d[z, align_channel])
+                binary_slice = generate_binary_mask(summed_channel[z])
+                intersection = np.logical_and(binary_ref, binary_slice)
+                dice = 2. * intersection.sum() / (binary_ref.sum() + binary_slice.sum())
+                print(f"For reference slice {reference_z} and current slice {z} the dice coeff: {dice}")
+                average_dice.append(dice)
+
+            else:
+                # Copy the reference slice as-is
+                aligned_image_4d[z] = image_4d[z]
+    except Exception as e:
+        print(e)
+        return None, 0
 
     return aligned_image_4d, np.mean(average_dice)
 
@@ -1404,7 +1432,7 @@ def save_arrays_as_images(arrays, use_colormap=False, output_folder='figures', f
 if __name__ == "__main__":
 
     p = ArgumentParser()
-    p.add_argument('--num_tissue', type=int, default=8, help='Number of tissues to detect, default is 8')
+    p.add_argument('--num_tissue', type=int, default=1, help='Number of tissues to detect, default is 8')
     p.add_argument('--level', type=int, default=0, help='Pyrmaid level of the image, default is 0 which is the original image size')
     p.add_argument('--thresh', type=int, default=None, help='Threshold value for binarization, default is done by otsu')
     p.add_argument('--kernel_size', type=int, default=100, help='Size of the structuring element used for closing, default is 0')
@@ -1412,13 +1440,16 @@ if __name__ == "__main__":
     p.add_argument('--scale_factor', type=int, default=8, help='Scale factor for downsample, default is 10')
     p.add_argument('--padding', type=int, default=50, help='Padding for bounding box, default is 20')
     p.add_argument('--connect', type=int, default=2, help='Connectivity for connected components, default is 2')
-    # p.add_argument('--pixel_size', type=list, default=[0.5073519424785282, 0.5073519424785282], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
-    p.add_argument('--pixel_size', type=list, default=[4.058815539828226, 4.058815539828226], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
-    p.add_argument('--output_folder', type=str, default='./outputs', help='Output folder for saving images, default is outputs')
-    p.add_argument('--input_folder', type=str, default='raw_data', help='Input folder for reading images, default is inputs')
+    p.add_argument('--pixel_size', type=list, default=[0.5073519424785282, 0.5073519424785282], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
+    # p.add_argument('--pixel_size', type=list, default=[4.058815539828226, 4.058815539828226], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
+    # p.add_argument('--pixel_size', type=list, default=[0.5082855933597976, 0.5082855933597976])
+    p.add_argument('--output_dir', type=str, default='./outputs', help='Output folder for saving images, default is outputs')
+    p.add_argument('--input_path', type=str, default='/hive/hubmap/data/CMU_Tools_Testing_Group/phenocycler/20c4aa0d79c0b8af37f27d436c1b42c4/QPTIFF-test/3D_image_stack.ome.tiff', help='Input folder for reading images, default is inputs')
+    # p.add_argument('--input_path', type=str, default='raw_data', help='Input folder for reading images, default is inputs')
     p.add_argument('--output_file_basename', type=str, default='aligned_tissue', help='Output file basename, default is aligned_tissue')
     p.add_argument('--align_upsample_factor', type=int, default=2, help='Upsample factor for aligning images, default is 2')
-    p.add_argument('--optimize', type=bool, default=False, help="optimize alignment parameters using optuna")
+    p.add_argument('--optimize', type=bool, default=True, help="optimize alignment parameters using optuna")
+    p.add_argument('--crop_only', type=bool, default=True, help="only identify tissues and crop, no alignment")
 
     args = p.parse_args()
 
@@ -1433,9 +1464,10 @@ if __name__ == "__main__":
         padding = args.padding,
         connect = args.connect,
         pixel_size = args.pixel_size,
-        output_folder = args.output_folder,
-        input_folder = args.input_folder,
+        output_folder = args.output_dir,
+        input_path = args.input_path,
         file_basename = args.output_file_basename,
-        optimize= args.optimize
+        optimize= args.optimize,
+        crop_only = args.crop_only
 
     )
