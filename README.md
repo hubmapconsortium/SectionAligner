@@ -21,8 +21,8 @@ python main.py --input_path "path/to/your/image.ome.tiff" --output_dir "path/to/
 
 ### Key Options
 
-    -num_tissue: Number of tissues to detect (default is 8).
-    -pixel_size: Pixel size in microns. (IMPORTANT as it determines how much to downsample and will effect end results)
+    --num_tissue: Number of tissues to detect (default is 8).
+    --pixel_size: Pixel size in microns. (IMPORTANT as it determines how much to downsample and will effect end results)
     --crop_only: Only identify tissues and crop, without alignment (default is False).
 
 ### All Options
