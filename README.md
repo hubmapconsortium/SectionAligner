@@ -45,14 +45,14 @@ python main.py --input_path "path/to/your/image.ome.tiff" --output_dir "path/to/
 
 ## Features
 
--Tissue Detection: Identifies tissues within OME-TIFF images.
--Image Cropping: Crops identified tissues for focused analysis.
--Image Alignment: Aligns tissue slices for better comparison and analysis.
--Optimization: Uses Optuna for optimizing image alignment parameters.
+**Tissue Detection**: Identifies tissues within OME-TIFF images. \
+**Image Cropping**: Crops identified tissues for focused analysis. \
+**Image Alignment**: Aligns tissue slices for better comparison and analysis. \
+**Optimization**: Uses Optuna for optimizing image alignment parameters.
 
 ## Contact 
 
-Ted Zhang [tedz@andrew.cmu.edu]
+Ted Zhang [tedz@andrew.cmu.edu] \
 Bob Murphy [murphy@andrew.cmu.edu]
 
 
