@@ -6,8 +6,8 @@ This project provides a comprehensive toolset for processing, analyzing, and ali
 Clone this repository and navigate into the project directory. Ensure you have Python 3.8 or later installed. It's recommended to use a virtual environment.
 
 ```bash
-git clone https://github.com/yourusername/yourprojectname.git
-cd yourprojectname
+git clone git@github.com:hubmapconsortium/SectionAligner.git
+cd SectionAligner
 pip install -r requirements.txt
 ```
 

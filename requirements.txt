@@ -1,0 +1,11 @@
+tifffile
+numpy
+matplotlib
+scikit-image
+opencv-python-headless
+aicsimageio
+optuna
+scipy
+sklearn
+ome-types
+json
