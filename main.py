@@ -88,7 +88,7 @@ def main(
         scale_factor_x = scale_factor
         scale_factor_y = scale_factor
 
-    pps = types.PhysicalPixelSizes(X=pixel_size[0], Y=pixel_size[1], Z=2.0)
+    pps = types.PhysicalPixelSizes(X=pixel_size[0], Y=pixel_size[1], Z=pixel_size[2])
     ###########################
 
     print('Starting...Read images')
@@ -836,7 +836,7 @@ def process_tissue(cropped_img, thresh, kernel_size, up_mask, connect=2):
     kernel_size = int(kernel_size / 5)
 
     img_2D = np.sum(cropped_img, axis=0)
-    img_2D_thresh = ((img_2D > thresh) * 255).astype(np.uint8)
+    img_2D_thresh = ((img_2D > int(thresh / 2)) * 255).astype(np.uint8)
 
     #first round
     closed_img = morphological_operation(img_2D_thresh, kernel_size, 'closing')
@@ -847,12 +847,16 @@ def process_tissue(cropped_img, thresh, kernel_size, up_mask, connect=2):
     open_img = morphological_operation(dilated_img, kernel_size, 'opening')
     closed_img_2 = morphological_operation(open_img, kernel_size, 'closing')
 
-    processed_img = morphological_operation(closed_img_2, int(kernel_size * 2), 'dilation')
+    # dilation needs to be tuned
+    processed_img = morphological_operation(closed_img_2, int(kernel_size * 4), 'dilation')
+
 
     #remove small holes
-    hole_thresh = int(processed_img.shape[0] * processed_img.shape[1] / 100) 
+    hole_thresh = int(processed_img.shape[0] * processed_img.shape[1] / 10) 
     processed_img_final = morphology.remove_small_holes(processed_img, area_threshold=hole_thresh)
     processed_img_final = (processed_img_final * 255).astype(np.uint8)
+
+    processed_img_final = morphological_operation(processed_img_final, kernel_size, 'dilation')
 
     #connected components
     cc_img = cv2.connectedComponentsWithStats(processed_img_final, connect, cv2.CV_32S)
@@ -876,8 +880,8 @@ def process_tissue(cropped_img, thresh, kernel_size, up_mask, connect=2):
     mask = mask.astype(np.uint8)
 
     #process the mask more for irregularities
-    mask_closed = morphological_operation(mask, kernel_size * 8, 'closing')
-    mask_final = morphology.remove_small_holes(mask_closed, area_threshold=hole_thresh)
+    mask_closed = morphological_operation(mask, kernel_size * 70, 'closing')
+    mask_final = morphology.remove_small_holes(mask_closed, area_threshold=int(hole_thresh / 10))
 
     return mask_final
 
@@ -1095,11 +1099,12 @@ def detect_tissues(cc_img_list, num_tissue=8):
         remapped_image = np.zeros_like(img)
         for label, index in sorted_labels_per_image[i].items():  # Skip the background label 0
             large_blobs = np.zeros_like(img, dtype=np.uint8)
-            large_blobs[img == label] = 255
+            mask = img == label
+            large_blobs[mask] = 255
             iso_tissue.append(large_blobs)
 
             #renumber 
-            remapped_image[img == label] = index
+            remapped_image[mask] = index
         slices_tissue.append(iso_tissue)
         remapped_images.append(remapped_image)
 
@@ -1447,16 +1452,16 @@ if __name__ == "__main__":
     p.add_argument('--scale_factor', type=int, default=8, help='Scale factor for downsample, default is 10')
     p.add_argument('--padding', type=int, default=50, help='Padding for bounding box, default is 20')
     p.add_argument('--connect', type=int, default=2, help='Connectivity for connected components, default is 2')
-    p.add_argument('--pixel_size', type=list, default=[0.5073519424785282, 0.5073519424785282], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
+    p.add_argument('--pixel_size', type=list, default=[0.5073519424785282, 0.5073519424785282, 2.0], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
     # p.add_argument('--pixel_size', type=list, default=[4.058815539828226, 4.058815539828226], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
     # p.add_argument('--pixel_size', type=list, default=[0.5082855933597976, 0.5082855933597976])
     p.add_argument('--output_dir', type=str, default='./outputs', help='Output folder for saving images, default is outputs')
-    p.add_argument('--input_path', type=str, default='/hive/hubmap/data/CMU_Tools_Testing_Group/phenocycler/20c4aa0d79c0b8af37f27d436c1b42c4/QPTIFF-test/3D_image_stack.ome.tiff', help='Input folder for reading images, default is inputs')
-    # p.add_argument('--input_path', type=str, default='raw_data', help='Input folder for reading images, default is inputs')
+    # p.add_argument('--input_path', type=str, default='/hive/hubmap/data/CMU_Tools_Testing_Group/phenocycler/20c4aa0d79c0b8af37f27d436c1b42c4/QPTIFF-test/3D_image_stack.ome.tiff', help='Input folder for reading images, default is inputs')
+    p.add_argument('--input_path', type=str, default='raw_data', help='Input folder for reading images, default is inputs')
     p.add_argument('--output_file_basename', type=str, default='aligned_tissue', help='Output file basename, default is aligned_tissue')
     p.add_argument('--align_upsample_factor', type=int, default=2, help='Upsample factor for aligning images, default is 2')
-    p.add_argument('--optimize', type=bool, default=True, help="optimize alignment parameters using optuna")
-    p.add_argument('--crop_only', type=bool, default=True, help="only identify tissues and crop, no alignment")
+    p.add_argument('--optimize', type=bool, default=False, help="optimize alignment parameters using optuna")
+    p.add_argument('--crop_only', type=bool, default=False, help="only identify tissues and crop, no alignment")
 
     args = p.parse_args()
 
