@@ -6,6 +6,5 @@ opencv-python-headless
 aicsimageio
 optuna
 scipy
-sklearn
+scikit-learn
 ome-types
-json
