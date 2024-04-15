@@ -218,6 +218,7 @@ def main(
             metadata = img.ome_metadata
             ome_object = from_xml(metadata)
             ome_xml = to_xml(ome_object)
+            ome_xml = ome_xml.replace('µ', 'u')
 
             with tiff.TiffWriter(f"{output_folder}/{file_basename}_{i}.ome.tif", bigtiff=True) as tif:
                 options = dict(metadata=None, description=ome_xml)
@@ -874,7 +875,7 @@ def process_tissue(cropped_img, thresh, kernel_size, up_mask, connect=2):
     # tissue_value = labels[cY, cX]
     masked_area = labels[up_mask > 0].flatten()
     # foreground_values = masked_area[masked_area != 0].flatten()
-    tissue_value, _ = stats.mode(masked_area)
+    tissue_value,_ = stats.mode(masked_area, keepdims=True)
 
     mask = labels == tissue_value[0]
     mask = mask.astype(np.uint8)
