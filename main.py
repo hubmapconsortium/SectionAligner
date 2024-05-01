@@ -22,6 +22,7 @@ from scipy import stats
 import json
 import os
 from ome_types import from_xml, to_xml
+from lxml import etree
 
 # CONST_PIXEL_SIZE_FOR_OPERATIONS = 0.5073519424785282 * 10 #microns
 CONST_PIXEL_SIZE_FOR_OPERATIONS = 4.058815539828226
@@ -70,6 +71,9 @@ def main(
 
     with open('raw_data/channelnames.txt', 'r') as file:
         channelnames = [line.strip() for line in file]
+
+    # Ensure the output_folder exists
+    Path(output_folder).mkdir(parents=True, exist_ok=True)
 
     #### OPTION PARAMETERS ####
     # level = 3 #downsample level - 3
@@ -217,11 +221,12 @@ def main(
         for i, img in enumerate(img_list):
             metadata = img.ome_metadata
             ome_object = from_xml(metadata)
-            ome_xml = to_xml(ome_object)
-            ome_xml = ome_xml.replace('µ', 'u')
+            ome_xml_string: str = to_xml(ome_object)
+            ome_xml = etree.fromstring(ome_xml_string)
+            ome_xml_string = etree.tostring(ome_xml, xml_declaration=True, encoding='ascii')
 
             with tiff.TiffWriter(f"{output_folder}/{file_basename}_{i}.ome.tif", bigtiff=True) as tif:
-                options = dict(metadata=None, description=ome_xml)
+                options = dict(metadata=None, description=ome_xml_string)
                 # tif.write(cropped_imgs[0][i], metadata=metadata)
                 tif.write(cropped_imgs[0][i], **options)
         

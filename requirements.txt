@@ -9,3 +9,4 @@ scipy
 scikit-learn
 ome-types
 git+https://github.com/hubmapconsortium/ome-utils
+lxml
