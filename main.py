@@ -68,9 +68,16 @@ def main(
     # local
     # img_dir = Path('raw_data/IMGS')
 
-
-    with open('raw_data/channelnames.txt', 'r') as file:
-        channelnames = [line.strip() for line in file]
+    try:
+        with open('raw_data/channelnames.txt', 'r') as file:
+            channelnames = [line.strip() for line in file]
+    except IOError:
+        if crop_only:
+            channelnames=None
+        else:
+            print('No channelnames file found in raw_data/channelnames.txt. This is required unless you are only '
+                  'cropping. \n Use --crop_only or create the file.')
+            exit(1)
 
     # Ensure the output_folder exists
     Path(output_folder).mkdir(parents=True, exist_ok=True)
@@ -1466,8 +1473,8 @@ if __name__ == "__main__":
     p.add_argument('--input_path', type=str, default='raw_data', help='Input folder for reading images, default is inputs')
     p.add_argument('--output_file_basename', type=str, default='aligned_tissue', help='Output file basename, default is aligned_tissue')
     p.add_argument('--align_upsample_factor', type=int, default=2, help='Upsample factor for aligning images, default is 2')
-    p.add_argument('--optimize', type=bool, default=False, help="optimize alignment parameters using optuna")
-    p.add_argument('--crop_only', type=bool, default=False, help="only identify tissues and crop, no alignment")
+    p.add_argument('--optimize', action='store_true', default=False, help='optimize alignment parameters using optuna')
+    p.add_argument('--crop_only', action='store_true', default=False, help='only identify tissues and crop, no alignment')
 
     args = p.parse_args()
 
