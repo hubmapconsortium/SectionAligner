@@ -5,7 +5,9 @@ scikit-image
 opencv-python-headless
 aicsimageio
 optuna
+pint
 scipy
 scikit-learn
 ome-types
-git+https://github.com/hubmapconsortium/ome-utils
+
+git+https://github.com/hubmapconsortium/ome-utils@v0.2
