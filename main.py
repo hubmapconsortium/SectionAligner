@@ -1,30 +1,27 @@
-import tifffile as tiff
-import numpy as np
-import matplotlib.pyplot as plt
-from pathlib import Path
-from skimage import morphology, transform
-from collections import defaultdict
-import cv2
-from aicsimageio.writers import OmeTiffWriter
-from aicsimageio import types
-import random
-from argparse import ArgumentParser
-# from skimage.filters import threshold_otsu
-# from aicsimageio import AICSImage
-# import pandas as pd
-import optuna
-import time
-# import torch
-from skimage.filters import threshold_multiotsu
-from scipy.spatial.distance import cdist
-from sklearn.preprocessing import StandardScaler
-from numpy.fft import fft
-from scipy import stats
 import json
 import os
+import random
+import time
+from argparse import ArgumentParser
+from collections import defaultdict
+from pathlib import Path
+
+import cv2
+import matplotlib.pyplot as plt
+import numpy as np
+import optuna
+import tifffile as tiff
+from aicsimageio import types
+from aicsimageio.writers import OmeTiffWriter
+from numpy.fft import fft
 from ome_types import from_xml, to_xml
 from ome_utils import get_converted_physical_size
 from pint import Quantity, UnitRegistry
+from scipy import stats
+from scipy.spatial.distance import cdist
+from skimage import morphology, transform
+from skimage.filters import threshold_multiotsu
+from sklearn.preprocessing import StandardScaler
 
 reg = UnitRegistry()
 
