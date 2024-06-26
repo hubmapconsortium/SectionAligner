@@ -82,23 +82,27 @@ def main(
 
     # pixel_size = [0.5073519424785282, 0.5073519424785282] #microns
 
-    physical_pixel_sizes: list[dict[str, Quantity]] = [get_converted_physical_size(image) for image in img_list]
-    unique_sizes = defaultdict(set)
-    for img_physical_pixel_size in physical_pixel_sizes:
+    physical_pixel_sizes_per_image: list[dict[str, Quantity]] = [get_converted_physical_size(image) for image in img_list]
+    # Read physical pixel size for all images, find unique sizes for each dimension
+    unique_sizes_by_dimension = defaultdict(set)
+    for img_physical_pixel_size in physical_pixel_sizes_per_image:
         for dimension, quantity in img_physical_pixel_size.items():
-            unique_sizes[dimension].add(quantity)
-    for dimension, sizes in unique_sizes.items():
+            unique_sizes_by_dimension[dimension].add(quantity)
+    # If there are multiple sizes for a particular dimension, throw an exception
+    for dimension, sizes in unique_sizes_by_dimension.items():
         if (count := len(sizes)) != 1:
             raise ValueError(f'Found {count} sizes for dimension {dimension}, needed 1')
-    constant_sizes = {dimension: next(iter(sizes)) for dimension, sizes in unique_sizes.items()}
+    physical_pixel_sizes = {dimension: next(iter(sizes)) for dimension, sizes in unique_sizes_by_dimension.items()}
 
-    scale_factor_x = int(DESIRED_PHYSICAL_PIXEL_SIZE / constant_sizes['X'])
-    scale_factor_y = int(DESIRED_PHYSICAL_PIXEL_SIZE / constant_sizes['Y'])
+    scale_factor_x = int(DESIRED_PHYSICAL_PIXEL_SIZE / physical_pixel_sizes['X'])
+    scale_factor_y = int(DESIRED_PHYSICAL_PIXEL_SIZE / physical_pixel_sizes['Y'])
 
     pps_kwargs = {}
     for dimension in 'XY':
-        pps_kwargs[dimension] = constant_sizes[dimension].magnitude
-    if 'Z' not in constant_sizes:
+        pps_kwargs[dimension] = physical_pixel_sizes[dimension].magnitude
+    if 'Z' not in physical_pixel_sizes:
+        # Happens with single-image PhenoCycler when this code is used
+        # only for tissue cropping
         print('Z physical size not found; assigning 1µm')
         pps_kwargs['Z'] = 1
     pps = types.PhysicalPixelSizes(**pps_kwargs)
