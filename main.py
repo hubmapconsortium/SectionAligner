@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 from skimage import morphology, transform
+from collections import defaultdict
 import cv2
 from aicsimageio.writers import OmeTiffWriter
 from aicsimageio import types
@@ -22,9 +23,12 @@ from scipy import stats
 import json
 import os
 from ome_types import from_xml, to_xml
+from ome_utils import get_converted_physical_size
+from pint import Quantity, UnitRegistry
 
-# CONST_PIXEL_SIZE_FOR_OPERATIONS = 0.5073519424785282 * 10 #microns
-CONST_PIXEL_SIZE_FOR_OPERATIONS = 4.058815539828226
+reg = UnitRegistry()
+
+DESIRED_PHYSICAL_PIXEL_SIZE = 4.058815539828226 * reg.um
 
 def main(
     num_tissue: int,
@@ -81,14 +85,27 @@ def main(
     # connect = 2
         
     # pixel_size = [0.5073519424785282, 0.5073519424785282] #microns
-    if not pixel_size[1] == 4.058815539828226 and not pixel_size[0] == 4.058815539828226:
-        scale_factor_x = int(CONST_PIXEL_SIZE_FOR_OPERATIONS / pixel_size[0])
-        scale_factor_y = int(CONST_PIXEL_SIZE_FOR_OPERATIONS / pixel_size[1])
-    else:
-        scale_factor_x = scale_factor
-        scale_factor_y = scale_factor
 
-    pps = types.PhysicalPixelSizes(X=pixel_size[0], Y=pixel_size[1], Z=pixel_size[2])
+    physical_pixel_sizes: list[dict[str, Quantity]] = [get_converted_physical_size(image) for image in img_list]
+    unique_sizes = defaultdict(set)
+    for img_physical_pixel_size in physical_pixel_sizes:
+        for dimension, quantity in img_physical_pixel_size.items():
+            unique_sizes[dimension].add(quantity)
+    for dimension, sizes in unique_sizes.items():
+        if (count := len(sizes)) != 1:
+            raise ValueError(f'Found {count} sizes for dimension {dimension}, needed 1')
+    constant_sizes = {dimension: next(iter(sizes)) for dimension, sizes in unique_sizes.items()}
+
+    scale_factor_x = int(DESIRED_PHYSICAL_PIXEL_SIZE / constant_sizes['X'])
+    scale_factor_y = int(DESIRED_PHYSICAL_PIXEL_SIZE / constant_sizes['Y'])
+
+    pps_kwargs = {}
+    for dimension in 'XY':
+        pps_kwargs[dimension] = constant_sizes[dimension].magnitude
+    if 'Z' not in constant_sizes:
+        print('Z physical size not found; assigning 1µm')
+        pps_kwargs['Z'] = 1
+    pps = types.PhysicalPixelSizes(**pps_kwargs)
     ###########################
 
     print('Starting...Read images')
@@ -1452,12 +1469,9 @@ if __name__ == "__main__":
     p.add_argument('--scale_factor', type=int, default=8, help='Scale factor for downsample, default is 10')
     p.add_argument('--padding', type=int, default=50, help='Padding for bounding box, default is 20')
     p.add_argument('--connect', type=int, default=2, help='Connectivity for connected components, default is 2')
-    p.add_argument('--pixel_size', type=int, nargs="*", default=[0.5073519424785282, 0.5073519424785282, 2.0], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
-    # p.add_argument('--pixel_size', type=int, nargs="*", default=[4.058815539828226, 4.058815539828226], help='Physical pixel size of the image in microns, default is [0.5073519424785282, 0.5073519424785282]')
-    # p.add_argument('--pixel_size', type=int, nargs="*", default=[0.5082855933597976, 0.5082855933597976])
-    p.add_argument('--output_dir', type=str, default='./outputs', help='Output folder for saving images, default is outputs')
+    p.add_argument('--output_dir', type=Path, default='./outputs', help='Output folder for saving images, default is outputs')
     # p.add_argument('--input_path', type=str, default='/hive/hubmap/data/CMU_Tools_Testing_Group/phenocycler/20c4aa0d79c0b8af37f27d436c1b42c4/QPTIFF-test/3D_image_stack.ome.tiff', help='Input folder for reading images, default is inputs')
-    p.add_argument('--input_path', type=str, default='raw_data', help='Input folder for reading images, default is inputs')
+    p.add_argument('--input_path', type=Path, default='raw_data', help='Input folder for reading images, default is inputs')
     p.add_argument('--output_file_basename', type=str, default='aligned_tissue', help='Output file basename, default is aligned_tissue')
     p.add_argument('--align_upsample_factor', type=int, default=2, help='Upsample factor for aligning images, default is 2')
     p.add_argument('--optimize', type=bool, default=False, help="optimize alignment parameters using optuna")
@@ -1475,11 +1489,9 @@ if __name__ == "__main__":
         align_upsample_factor = args.align_upsample_factor,
         padding = args.padding,
         connect = args.connect,
-        pixel_size = args.pixel_size,
         output_folder = args.output_dir,
         input_path = args.input_path,
         file_basename = args.output_file_basename,
         optimize= args.optimize,
-        crop_only = args.crop_only
-
+        crop_only = args.crop_only,
     )
