@@ -29,7 +29,7 @@ DESIRED_PHYSICAL_PIXEL_SIZE = 4.058815539828226 * reg.um
 
 def main(
     num_tissue: int,
-    level: int, 
+    level: int,
     thresh: int,
     kernel_size: int,
     holes_thresh: int,
@@ -60,7 +60,7 @@ def main(
     else:
         print(f"The path {input_path} does not exist.")
         exit()
-        
+
 
     # in hive
     # img_dir = Path('raw_data')
@@ -73,13 +73,13 @@ def main(
 
     #### OPTION PARAMETERS ####
     # level = 3 #downsample level - 3
-    # thresh = 30 # needs to be percentage of max value 
+    # thresh = 30 # needs to be percentage of max value
     # kernel_size = 0 # 0
     # holes_thresh = 300 #300
     # scale_factor = 10 #10
     # padding = 20
     # connect = 2
-        
+
     # pixel_size = [0.5073519424785282, 0.5073519424785282] #microns
 
     physical_pixel_sizes: list[dict[str, Quantity]] = [get_converted_physical_size(image) for image in img_list]
@@ -121,7 +121,7 @@ def main(
     img_arr_downsample = [transform.downscale_local_mean(img, (1, scale_factor_x,scale_factor_y)) for img in img_arr]
 
     img_2D = sum_channels(img_arr_downsample)
-        
+
     # img_2D = sum_channels(img_arr)
     print('Time to read images + Downsampling + Summing all channels:', time.time() - start)
 
@@ -143,7 +143,7 @@ def main(
 
 
 
-    # convert to binary image by thresholding > 0 
+    # convert to binary image by thresholding > 0
     binary_imgs = [img > thresh[i] for i, img in enumerate(img_2D)]
     # binary_imgs = [img > thresh[i] for i, img in enumerate(img_2D_downsample)]
     binary_imgs = [(img * 255).astype(np.uint8) for img in binary_imgs]
@@ -162,9 +162,9 @@ def main(
     # Erode the dilated image
     eroded_imgs_2 = [morphological_operation(img, int(kernel_size/10), 'erode', its=2) for img in dilated_imgs]
 
-    # filled_imgs = [morphology.remove_small_holes(img, area_threshold=holes_thresh) for img in eroded_imgs] 
+    # filled_imgs = [morphology.remove_small_holes(img, area_threshold=holes_thresh) for img in eroded_imgs]
     # filled_imgs = [(img * 255).astype(np.uint8) for img in filled_imgs]
-    # filled_imgs = [morphology.remove_small_holes(img, area_threshold=holes_thresh*2) for img in closed_imgs] 
+    # filled_imgs = [morphology.remove_small_holes(img, area_threshold=holes_thresh*2) for img in closed_imgs]
     # filled_imgs = [(img * 255).astype(np.uint8) for img in filled_imgs]
 
     # dilate image then close
@@ -236,7 +236,7 @@ def main(
                 options = dict(metadata=None, description=ome_xml)
                 # tif.write(cropped_imgs[0][i], metadata=metadata)
                 tif.write(cropped_imgs[0][i], **options)
-        
+
         exit()
 
     # stack images
@@ -264,7 +264,7 @@ def main(
         if optimize:
             optimize_sift_parameters(summed_channels, img, output_folder, ref_slices[i], i)
             continue
-    
+
 
 
         # Normal alignment using dapi
@@ -295,7 +295,7 @@ def main(
     if optimize:
         exit()
 
-    
+
     print('Time to Align images:', time.time() - start)
 
 
@@ -363,8 +363,8 @@ def align_z_slices(summed_channel, image_4d, reference_z=0, align_channel=0, par
         n_features = 0  # 0 means no limit
         n_octave_layers = 4  # Default value
         contrast_threshold = 0.03  # Lowering this might result in more features being detected
-        edge_threshold = 5  # Lowering this might result in more features being detected 
-        sigma = 2  
+        edge_threshold = 5  # Lowering this might result in more features being detected
+        sigma = 2
         ratio_threshold = 0.75  # Lowe's ratio test
         flann_check = 200
         flann_trees = 20
@@ -380,7 +380,7 @@ def align_z_slices(summed_channel, image_4d, reference_z=0, align_channel=0, par
     # ref_slice = np.sum(image_4d[reference_z].transpose(1, 2, 0), axis=2)
     # ref_slice = np.mean(image_4d[reference_z], axis=0).astype(np.uint8)
 
-    
+
 
     #one channel - dapi
     # ref_slice = image_4d[reference_z, align_channel].astype(np.uint8)
@@ -395,7 +395,7 @@ def align_z_slices(summed_channel, image_4d, reference_z=0, align_channel=0, par
 
     keypoints_ref, descriptors_ref = sift.detectAndCompute(ref_slice, None)
 
-    
+
 
     # Initialize FLANN based matcher
     FLANN_INDEX_KDTREE = 1
@@ -451,7 +451,7 @@ def align_z_slices(summed_channel, image_4d, reference_z=0, align_channel=0, par
                 src_pts = np.float32([keypoints[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
                 dst_pts = np.float32([keypoints_ref[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
 
-                try: 
+                try:
                     M, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
                     aligned_slice = cv2.warpPerspective(image_4d[z].transpose(1, 2, 0), M, (image_4d.shape[3], image_4d.shape[2]))
 
@@ -460,7 +460,7 @@ def align_z_slices(summed_channel, image_4d, reference_z=0, align_channel=0, par
                 except Exception as e:
                     print(e)
                     return None, 0
-                    
+
 
                 # Apply the transformation to align the z-slice
                 aligned_image_4d[z] = aligned_slice.transpose(2, 0, 1)
@@ -470,7 +470,7 @@ def align_z_slices(summed_channel, image_4d, reference_z=0, align_channel=0, par
                 # keypoints_ref = keypoints
                 # descriptors_ref = descriptors
 
-                #check dice coeff against ref   
+                #check dice coeff against ref
                 # binary_slice = generate_binary_mask(aligned_image_4d[z, align_channel])
                 binary_slice = generate_binary_mask(summed_channel[z])
                 intersection = np.logical_and(binary_ref, binary_slice)
@@ -490,7 +490,7 @@ def align_z_slices(summed_channel, image_4d, reference_z=0, align_channel=0, par
 def generate_binary_mask(image, threshold=30):
     """
     Convert an image to a binary mask based on a threshold.
-    
+
     :param image: Input image (2D array).
     :param threshold: Threshold value for binarization.
     :return: Binary mask of the image.
@@ -536,10 +536,10 @@ def objective(trial, summed_channels, image_4d, ref_slices):
     # Perform alignment using the current SIFT configuration
     # Note: You'll need to modify your alignment function to accept the `sift` parameter
     _, average_dice = align_z_slices(summed_channels, image_4d, ref_slices, params=params)
-    
+
     # Evaluate alignment quality
     # _, average_dice, _ = calculate_metrics(aligned_image_4d)
-    
+
     # Since Optuna minimizes the objective, return a negative value of the metric if higher is better
     return average_dice
 
@@ -549,7 +549,7 @@ def optimize_sift_parameters(summed_channels, image_4d, output_dir, ref_slices, 
     study = optuna.create_study(direction='maximize')
     study.optimize(lambda trial: objective(trial, summed_channels, image_4d, ref_slices), n_trials=25)  # Adjust n_trials to your preference
 
-    
+
     print('Number of finished trials:', len(study.trials))
     print('Best trial:', study.best_trial.params)
 
@@ -571,7 +571,7 @@ def optimize_sift_parameters(summed_channels, image_4d, output_dir, ref_slices, 
             # 'system_attrs': trial.system_attrs,
         }
         trials_data.append(trial_data)
-    
+
     # Serialize to JSON and save to file
     with open(f'{output_dir}/optuna_trials_image_{image_index}.json', 'w') as f:
         json.dump(trials_data, f, indent=4)
@@ -583,7 +583,7 @@ def calculate_metrics(aligned_image_4d, ref_slice, align_channel=0, threshold=30
     """
     Calculate the Dice coefficient and area consistency between consecutive slices in a 4D image array
     after converting each slice into a binary image.
-    
+
     :param aligned_image_4d: 4D image array with shape (z-slice, channels, height, width).
     :param align_channel: The channel index to use for creating binary images.
     :param threshold: Threshold value for binarization.
@@ -606,15 +606,15 @@ def calculate_metrics(aligned_image_4d, ref_slice, align_channel=0, threshold=30
     # sum all channels
     # prev_sum_img = all_sum_img_per_z[0]
 
-    
+
     # Convert the first slice to a binary mask and store as the previous slice's mask
     # prev_slice_mask = generate_binary_mask(aligned_image_4d[0, align_channel])
     # prev_slice_mask = generate_binary_mask(prev_sum_img)
     prev_slice_mask = all_binary_img_per_z[0]
 
-    #or all images in the list 
+    #or all images in the list
     image_coverage = np.logical_or.reduce(all_binary_img_per_z)
-    
+
     for z in range(1, aligned_image_4d.shape[0]):
         # Convert the current slice to a binary mask
         # current_sum_img = convert_to_grayscale_sum(aligned_image_4d[z])
@@ -622,7 +622,7 @@ def calculate_metrics(aligned_image_4d, ref_slice, align_channel=0, threshold=30
         # current_slice_mask = generate_binary_mask(aligned_image_4d[z, align_channel])
         # current_slice_mask = generate_binary_mask(current_sum_img)
         current_slice_mask = all_binary_img_per_z[z]
-        
+
         # Calculate Dice coefficient
         intersection = np.logical_and(prev_slice_mask, current_slice_mask)
         dice = 2. * intersection.sum() / (prev_slice_mask.sum() + current_slice_mask.sum())
@@ -636,13 +636,13 @@ def calculate_metrics(aligned_image_4d, ref_slice, align_channel=0, threshold=30
 
         area_consistency.append(compare.sum() / image_coverage.sum())
         dice_coefficients.append(dice)
-        
+
         # Update the previous slice mask
         prev_slice_mask = current_slice_mask
 
     average_dice = np.mean(dice_coefficients) if dice_coefficients else 0
     average_area_consistency = np.mean(area_consistency) if area_consistency else 0
-    
+
     return dice_coefficients, average_dice, average_area_consistency
 
 def plot_stack(image_4d, align_channel=0):
@@ -673,7 +673,7 @@ def stack_images(list_of_lists_of_images):
     if idx_mismatch is not None:
         for i in idx_mismatch:
             tissue_imgs[i] = pad_images_to_max_size(tissue_imgs[i])
-        
+
     # Stack images of the same index from each inner list
     # stacked_images = [np.stack([inner_list[i] for inner_list in list_of_lists_of_images], axis=0) for i in range(num_images)]
     stacked_images = [np.stack(tissue_imgs[i], axis=0) for i in range(num_images)]
@@ -682,21 +682,21 @@ def stack_images(list_of_lists_of_images):
 
 def check_inner_lists_sizes(list_of_lists):
     """
-    Check if all arrays in each inner list of a list have the same size. 
+    Check if all arrays in each inner list of a list have the same size.
 
     :param list_of_lists: List of lists, where each inner list contains numpy arrays.
     :return: List of indices of inner lists with mismatched sizes, or None if all inner lists have arrays of the same size.
     """
 
     idx_list = []
-    
+
     for idx, inner_list in enumerate(list_of_lists):
         if inner_list:  # Check if the inner list is not empty
             first_shape = inner_list[0].shape
             for array in inner_list[1:]:
                 if array.shape != first_shape:
                     idx_list.append(idx)  # Return the index of the inner list with mismatched sizes
-    
+
     if idx_list:
         return idx_list
     else:
@@ -727,13 +727,13 @@ def close_blob(binary_image, kernel_size=10):
     :param kernel_size: Size of the structuring element used for closing.
     :return: The closed binary image.
     """
-    
+
     # Create the structuring element
     kernel = np.ones((kernel_size, kernel_size), np.uint8)
-    
+
     # Apply closing (dilation followed by erosion)
     closed_image = cv2.morphologyEx(binary_image, cv2.MORPH_CLOSE, kernel)
-    
+
     return closed_image
 
 def upsample_image(image, sfx, sfy):
@@ -754,7 +754,7 @@ def upsample_image(image, sfx, sfy):
     return upsampled_image
 
 def crop_imgs(imgs, bbox, centroids, padding, filtered_imgs, upsample_factor, sfx, sfy, thresh, kernel_size=10, scale=True):
-    
+
     cropped_slices = []
 
     for i, img in enumerate(imgs):
@@ -832,15 +832,15 @@ def crop_imgs(imgs, bbox, centroids, padding, filtered_imgs, upsample_factor, sf
 
 
 
-            
+
 
 
             cropped_imgs.append(new_img)
             # cropped_imgs.append(img[y:y+h, x:x+w])
 
-        cropped_slices.append(cropped_imgs) 
+        cropped_slices.append(cropped_imgs)
 
-    
+
     return cropped_slices
 
 def process_tissue(cropped_img, thresh, kernel_size, up_mask, connect=2):
@@ -865,7 +865,7 @@ def process_tissue(cropped_img, thresh, kernel_size, up_mask, connect=2):
 
 
     #remove small holes
-    hole_thresh = int(processed_img.shape[0] * processed_img.shape[1] / 10) 
+    hole_thresh = int(processed_img.shape[0] * processed_img.shape[1] / 10)
     processed_img_final = morphology.remove_small_holes(processed_img, area_threshold=hole_thresh)
     processed_img_final = (processed_img_final * 255).astype(np.uint8)
 
@@ -911,7 +911,7 @@ def create_bounding_box(cX, cY, width, height, img, padding, sfx, sfy, scale=Tru
         y1 = max(y1, 0) * sfy
         x2 = min(x2, img.shape[2]) * sfx
         y2 = min(y2, img.shape[1]) * sfy
-    else: 
+    else:
         x1 = max(x1, 0)
         y1 = max(y1, 0)
         x2 = min(x2, img.shape[2])
@@ -976,7 +976,7 @@ def find_biggest_bound_box(slice_imgs):
         slice_list.append(best_slice)
 
         # d[i] = biggest_bbox
-    
+
 
     return biggest_bounding_boxes, centroids_slices, bounding_box_slices, slice_list
 
@@ -1015,7 +1015,7 @@ def compute_bounding_box(imgs):
             # y_padded = max(y - padding, 0)
             # w_padded = min(w + 2 * padding, img.shape[1] - x_padded)
             # h_padded = min(h + 2 * padding, img.shape[0] - y_padded)
-            
+
             #crop image
             # img = img[y_padded:y_padded+h_padded, x_padded:x_padded+w_padded]
             # Draw the bounding box and centroid on the image (for visualization)
@@ -1060,7 +1060,7 @@ def detect_tissues(cc_img_list, num_tissue=8):
         new_labels = filter_array(labels, tissue_values)
 
         #renumber labels to be sequential
-        
+
         for new, old in zip(new_values, tissue_values):
             new_labels[new_labels == old] = new
 
@@ -1075,7 +1075,7 @@ def detect_tissues(cc_img_list, num_tissue=8):
     # matches = match_all_images(filtered_imgs)
     # global_mappings = propagate_labels(matches)
     # reindexed_images = apply_new_labels(filtered_imgs, global_mappings)
-        
+
     # MATCHING BASED ON OVERLAP
     # max_height = max(img.shape[0] for img in filtered_imgs)
     # max_width = max(img.shape[1] for img in filtered_imgs)
@@ -1103,7 +1103,7 @@ def detect_tissues(cc_img_list, num_tissue=8):
 
     # global_mappings = propagate_labels(all_matches)
     # reindexed_images = apply_new_labels(filtered_imgs, global_mappings)
-    
+
     slices_tissue = []
     remapped_images = []
     for i, img in enumerate(filtered_imgs):
@@ -1116,7 +1116,7 @@ def detect_tissues(cc_img_list, num_tissue=8):
             large_blobs[mask] = 255
             iso_tissue.append(large_blobs)
 
-            #renumber 
+            #renumber
             remapped_image[mask] = index
         slices_tissue.append(iso_tissue)
         remapped_images.append(remapped_image)
@@ -1129,19 +1129,19 @@ def sort_split_combine(centroids):
 
     # Step 2: Sort by x-coordinate
     sorted_by_x = sorted(centroids_list, key=lambda item: item[1][0])
-    
+
     # Step 3: Split into two halves
     mid_point = len(sorted_by_x) // 2
     first_half = sorted_by_x[:mid_point]
     second_half = sorted_by_x[mid_point:]
-    
+
     # Step 4: Sort each half by y-coordinate
     sorted_first_half = sorted(first_half, key=lambda item: item[1][1], reverse=True)  # Reverse for higher indexing
     sorted_second_half = sorted(second_half, key=lambda item: item[1][1])
 
     # Combine the halves, with the first half first
     combined_sorted = sorted_first_half + sorted_second_half
-    
+
     # Assign new indices based on this combined order
     new_order = {item[0]: index+1 for index, item in enumerate(combined_sorted)}  # +1 if indexing should start from 1
 
@@ -1167,28 +1167,28 @@ def calculate_overlap(source_image, target_image, label, matched_list):
 
     # Create a binary mask for the blob in the source image
     source_mask = source_image == label
-    
+
     # Initialize variables to track the maximum overlap
     max_overlap = 0
     max_label = None
-    
+
     # Check overlap with each label in the target image
     for target_label in np.unique(target_image):
         if target_label == 0:  # Skip background
             continue
-        
+
         # Create a binary mask for the current blob in the target image
         target_mask = target_image == target_label
-        
+
         # Calculate overlap by counting the pixels where both masks are True
         overlap = np.sum(source_mask & target_mask)
         print(f"Overlap between source label {label} and target label {target_label}: {overlap}")
-        
+
         # Update max overlap and corresponding label
         if overlap > max_overlap and target_label not in matched_list:
             max_overlap = overlap
             max_label = target_label
-    
+
     return max_label, max_overlap
 
 def find_matching_blob(centroid, target_image):
@@ -1203,7 +1203,7 @@ def find_matching_blob(centroid, target_image):
 def propagate_labels(all_matches):
     """
     Propagates label changes across all images based on match mappings.
-    
+
     :param all_matches: List of dictionaries with match mappings between consecutive image pairs.
     :return: List of dictionaries representing the global label mapping for each image.
     """
@@ -1212,18 +1212,18 @@ def propagate_labels(all_matches):
     # Start with the first image, assuming its labels are correct
     for label in range(1, 9):  # Assuming labels 1 to 8
         global_mappings[0][label] = label
-    
+
     # Propagate matches
     for i, matches in enumerate(all_matches):
         for label1, label2 in matches.items():
             global_mappings[i + 1][label2] = global_mappings[i][label1]
-    
+
     return global_mappings
 
 def apply_new_labels(images, global_mappings):
     """
     Applies new labels to all images based on the global label mappings.
-    
+
     :param images: List of 2D arrays, each representing an image with labeled blobs.
     :param global_mappings: List of dictionaries representing the global label mapping for each image.
     :return: List of 2D arrays with reindexed blobs.
@@ -1248,11 +1248,11 @@ def extract_features(image):
         if label == 0:  # Skip background
             continue
         blob = (image == label).astype(np.uint8)
-        
+
         # Find contours for the current blob
         contours, _ = cv2.findContours(blob, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         largest_contour = max(contours, key=cv2.contourArea)
-        
+
         # Basic Shape Descriptors
         area = cv2.contourArea(largest_contour)
         M = cv2.moments(largest_contour)
@@ -1260,18 +1260,18 @@ def extract_features(image):
         centroid_y = M['m01'] / M['m00']
         huMoments = cv2.HuMoments(M).flatten()
         huMoments = np.sign(huMoments) * np.log10(np.abs(huMoments))
-        
+
         # Eccentricity and Solidity
         (x, y), (MA, ma), angle = cv2.fitEllipse(largest_contour)
         eccentricity = np.sqrt(1 - (MA/ma)**2)
         hull = cv2.convexHull(largest_contour)
         hull_area = cv2.contourArea(hull)
         solidity = float(area) / hull_area
-        
+
         # Boundary Features
         perimeter = cv2.arcLength(largest_contour, True)
         compactness = (perimeter**2) / (4 * np.pi * area)
-        
+
         # Fourier Descriptors
         contour_complex = largest_contour[:, 0, 0] + 1j * largest_contour[:, 0, 1]
         fourier_result = fft(contour_complex)
@@ -1280,7 +1280,7 @@ def extract_features(image):
 
         # Combine all features into a single vector
         features[label] = np.hstack([huMoments, solidity, eccentricity, area, centroid_x, centroid_y, perimeter, compactness])
-        
+
     return features
 
 def standardize_features(features):
@@ -1302,10 +1302,10 @@ def compare_blobs(features1, features2):
     labels2, features2 = zip(*features2.items())
     features1 = np.array(features1).squeeze()
     features2 = np.array(features2).squeeze()
-    
+
     # Calculate pairwise distances between standardized feature vectors
     distances = cdist(features1, features2, 'euclidean')
-    
+
     matches = {}
     for i, label1 in enumerate(labels1):
         match_index = np.argmin(distances[i])
@@ -1322,11 +1322,11 @@ def match_all_images(images):
 
     # Standardize features across all blobs in all images
     standardized_features = [standardize_features(features) for features in all_features]
-    
+
     for i in range(len(standardized_features) - 1):
         matches = compare_blobs(standardized_features[i], standardized_features[i + 1])
         all_matches.append(matches)
-    
+
     return all_matches
 
 def filter_array(arr, values):
@@ -1393,7 +1393,7 @@ def morphological_operation(img, kernel_size, operation, its=1):
         return img
 
 def sum_channels(img_arr):
-    
+
     return [np.sum(img, axis=0, dtype=np.uint16) for img in img_arr]
 
 def plot_img_from_list(img_list):
