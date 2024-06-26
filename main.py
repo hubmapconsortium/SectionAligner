@@ -44,7 +44,7 @@ def main(
     crop_only: bool
 ):
 
-    start_begin = time.time()
+    start_begin = time.monotonic()
     input_path = Path(input_path)
     img_list = []
 
@@ -106,7 +106,7 @@ def main(
 
     print('Starting...Read images')
     #time the process
-    start = time.time()
+    start = time.monotonic()
     # Load images
     # img_list = []
     # img_list_sorted =  sorted(img_dir.glob('*.qptiff'), key=lambda x: x.name[:3].lower())
@@ -123,13 +123,13 @@ def main(
     img_2D = sum_channels(img_arr_downsample)
 
     # img_2D = sum_channels(img_arr)
-    print('Time to read images + Downsampling + Summing all channels:', time.time() - start)
+    print('Time to read images + Downsampling + Summing all channels:', time.monotonic() - start)
 
     # plot_img_from_list(img_2D)
 
     print('Preprocessing images...Thresholding, Downsample, Closing, Filling Holes, Erosion, Dilation, Connected Components')
     # time the process
-    start = time.time()
+    start = time.monotonic()
     # otsu for threshold for automation
     if thresh == None:
         # thresh = [cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[0] for img in img_2D]
@@ -195,14 +195,14 @@ def main(
     ##################################################################################################################
     connected_comp_imgs = [cv2.connectedComponentsWithStats(img, connect, cv2.CV_32S) for img in processed_imgs]
 
-    print('Time to Preprocess images:', time.time() - start)
+    print('Time to Preprocess images:', time.monotonic() - start)
 
     print('Detecting tissues...')
     # time the process
-    start = time.time()
+    start = time.monotonic()
     # filtered_imgs = [detect_tissues(img, num_tissue) for img in connected_comp_imgs]
     iso_imgs, full_labels  = detect_tissues(connected_comp_imgs, num_tissue)
-    print('Time to Detect tissues:', time.time() - start)
+    print('Time to Detect tissues:', time.monotonic() - start)
 
     ### COLOR LABEL IMAGES ###
     save_arrays_as_images(full_labels, use_colormap=True, output_folder=output_folder, file_prefix="labels", file_extension=".png")
@@ -210,15 +210,15 @@ def main(
 
     #Match overlap of filtered images so that the same tissues are matching
     # time the process
-    # start = time.time()
+    # start = time.monotonic()
     # filtered_imgs = match_overlap(filtered_imgs)
-    # print('Time to Match overlap:', time.time() - start)
+    # print('Time to Match overlap:', time.monotonic() - start)
 
     assert_same_length(iso_imgs)
 
     print('Cropping images and stack...')
     # time the process
-    start = time.time()
+    start = time.monotonic()
     # find biggest bounding box and mask
     tissue_bbox, centroid_slices, bbox_slices, ref_slices = find_biggest_bound_box(iso_imgs)
 
@@ -241,12 +241,12 @@ def main(
 
     # stack images
     stacked_imgs = stack_images(cropped_imgs)
-    print('Time to Crop images and stack:', time.time() - start)
+    print('Time to Crop images and stack:', time.monotonic() - start)
 
 
     print('Aligning images...')
     # time the process
-    start = time.time()
+    start = time.monotonic()
 
     aligned_tissue_list = []
     for i, img in enumerate(stacked_imgs):
@@ -296,12 +296,12 @@ def main(
         exit()
 
 
-    print('Time to Align images:', time.time() - start)
+    print('Time to Align images:', time.monotonic() - start)
 
 
     print('Saving images...')
     # time the process
-    start = time.time()
+    start = time.monotonic()
     # save stack images
     for i, img in enumerate(aligned_tissue_list):
         OmeTiffWriter.save(
@@ -312,8 +312,8 @@ def main(
             physical_pixel_sizes=pps,
         )
 
-    print('Time to Save images:', time.time() - start)
-    print('Total time:', time.time() - start_begin)
+    print('Time to Save images:', time.monotonic() - start)
+    print('Total time:', time.monotonic() - start_begin)
 
 
 
