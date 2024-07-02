@@ -15,15 +15,13 @@ from aicsimageio import types
 from aicsimageio.writers import OmeTiffWriter
 from numpy.fft import fft
 from ome_types import from_xml, to_xml
-from ome_utils import get_converted_physical_size
+from ome_utils import get_converted_physical_size, reg
 from pint import Quantity, UnitRegistry
 from scipy import stats
 from scipy.spatial.distance import cdist
 from skimage import morphology, transform
 from skimage.filters import threshold_multiotsu
 from sklearn.preprocessing import StandardScaler
-
-reg = UnitRegistry()
 
 DESIRED_PHYSICAL_PIXEL_SIZE = 4.058815539828226 * reg.um
 
@@ -108,7 +106,7 @@ def main(
     ###########################
 
     print('Starting...Read images')
-    #time the process
+    #time the processƒ
     start = time.monotonic()
     # Load images
     # img_list = []
