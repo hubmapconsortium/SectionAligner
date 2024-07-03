@@ -245,9 +245,9 @@ def main(
             ome_object = from_xml(metadata)
             ome_xml_string: str = to_xml(ome_object)
             ome_xml = etree.fromstring(ome_xml_string)
-            ome_xml_string = etree.tostring(ome_xml, xml_declaration=True, encoding='ascii')
+            ome_xml_string = etree.tostring(ome_xml, xml_declaration=True, encoding='UTF-8')
 
-            with tiff.TiffWriter(f"{output_folder}/{file_basename}_{i}.ome.tif", bigtiff=True) as tif:
+            with tiff.TiffWriter(f"{output_folder}/{file_basename}_{i}.ome.tif", bigtiff=True, shaped=False) as tif:
                 options = dict(metadata=None, description=ome_xml_string)
                 # tif.write(cropped_imgs[0][i], metadata=metadata)
                 tif.write(cropped_imgs[0][i], **options)
