@@ -67,8 +67,7 @@ def main(
     # local
     # img_dir = Path('raw_data/IMGS')
 
-
-    with open('raw_data/channelnames.txt', 'r') as file:
+    with open(input_path._str + '/channelnames.txt', 'r') as file:
         channelnames = [line.strip() for line in file]
 
     #### OPTION PARAMETERS ####
@@ -234,6 +233,12 @@ def main(
         for i, img in enumerate(img_list):
             metadata = img.ome_metadata
             ome_object = from_xml(metadata)
+
+            #only y and x should have changed
+            for image in ome_object.images:
+                image.pixels.size_x = cropped_imgs[i][0].shape[2]
+                image.pixels.size_y = cropped_imgs[i][0].shape[1]
+
             ome_xml = to_xml(ome_object)
 
             with tiff.TiffWriter(f"{output_folder}/{file_basename}_{i}.ome.tif", bigtiff=True) as tif:
@@ -1461,17 +1466,17 @@ def save_arrays_as_images(arrays, use_colormap=False, output_folder='figures', f
 if __name__ == "__main__":
 
     p = ArgumentParser()
-    p.add_argument('--num_tissue', type=int, default=1, help='Number of tissues to detect, default is 8')
+    p.add_argument('--num_tissue', type=int, default=8, help='Number of tissues to detect, default is 8')
     p.add_argument('--level', type=int, default=0, help='Pyrmaid level of the image, default is 0 which is the original image size')
     p.add_argument('--thresh', type=int, default=None, help='Threshold value for binarization, default is done by otsu')
     p.add_argument('--kernel_size', type=int, default=100, help='Size of the structuring element used for closing, default is 0')
     p.add_argument('--holes_thresh', type=int, default=5000, help='Area threshold for removing small holes, default is 300')
-    p.add_argument('--scale_factor', type=int, default=8, help='Scale factor for downsample, default is 10')
+    p.add_argument('--scale_factor', type=int, default=8, help='Scale factor for downsample, default is 8')
     p.add_argument('--padding', type=int, default=50, help='Padding for bounding box, default is 20')
     p.add_argument('--connect', type=int, default=2, help='Connectivity for connected components, default is 2')
     p.add_argument('--output_dir', type=Path, default='./outputs', help='Output folder for saving images, default is outputs')
     # p.add_argument('--input_path', type=str, default='/hive/hubmap/data/CMU_Tools_Testing_Group/phenocycler/20c4aa0d79c0b8af37f27d436c1b42c4/QPTIFF-test/3D_image_stack.ome.tiff', help='Input folder for reading images, default is inputs')
-    p.add_argument('--input_path', type=Path, default='raw_data', help='Input folder for reading images, default is inputs')
+    p.add_argument('--input_path', type=str, default='SectionAligner/raw_data', help='Input folder for reading images, default is inputs')
     p.add_argument('--output_file_basename', type=str, default='aligned_tissue', help='Output file basename, default is aligned_tissue')
     p.add_argument('--align_upsample_factor', type=int, default=2, help='Upsample factor for aligning images, default is 2')
     p.add_argument('--optimize', type=bool, default=False, help="optimize alignment parameters using optuna")
