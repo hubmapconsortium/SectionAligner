@@ -19,7 +19,7 @@ from ome_utils import get_converted_physical_size
 from pint import Quantity, UnitRegistry
 from scipy import stats
 from scipy.spatial.distance import cdist
-from skimage import morphology, transform
+from skimage import morphology, transform, measure
 from skimage.filters import threshold_multiotsu
 from sklearn.preprocessing import StandardScaler
 
@@ -67,6 +67,7 @@ def main(
     # local
     # img_dir = Path('raw_data/IMGS')
 
+    # 
     with open(input_path._str + '/channelnames.txt', 'r') as file:
         channelnames = [line.strip() for line in file]
 
@@ -79,9 +80,11 @@ def main(
     # padding = 20
     # connect = 2
 
-    # pixel_size = [0.5073519424785282, 0.5073519424785282] #microns
+    # physical_pixel_sizes = [0.5073519424785282 * reg.um, 0.5073519424785282 * reg.um] #microns
 
-    physical_pixel_sizes_per_image: list[dict[str, Quantity]] = [get_converted_physical_size(image) for image in img_list]
+    physical_pixel_sizes_per_image: list[dict[str, Quantity]] = [{'X': 0.5073519424785282 * reg.um, 'Y': 0.5073519424785282 * reg.um} for image in img_list]
+
+    # physical_pixel_sizes_per_image: list[dict[str, Quantity]] = [get_converted_physical_size(image) for image in img_list]
     # Read physical pixel size for all images, find unique sizes for each dimension
     unique_sizes_by_dimension = defaultdict(set)
     for img_physical_pixel_size in physical_pixel_sizes_per_image:
@@ -92,12 +95,17 @@ def main(
         if (count := len(sizes)) != 1:
             raise ValueError(f'Found {count} sizes for dimension {dimension}, needed 1')
     physical_pixel_sizes = {dimension: next(iter(sizes)) for dimension, sizes in unique_sizes_by_dimension.items()}
+    # physical_pixel_sizes = {dimension: next(iter(sizes)) for dimension, sizes in physical_pixel_sizes}
 
     scale_factor_x = int(DESIRED_PHYSICAL_PIXEL_SIZE / physical_pixel_sizes['X'])
     scale_factor_y = int(DESIRED_PHYSICAL_PIXEL_SIZE / physical_pixel_sizes['Y'])
 
+    # scale_factor_x = int(DESIRED_PHYSICAL_PIXEL_SIZE / physical_pixel_sizes[0])
+    # scale_factor_y = int(DESIRED_PHYSICAL_PIXEL_SIZE / physical_pixel_sizes[1])
+
     pps_kwargs = {}
     for dimension in 'XY':
+        # pps_kwargs[dimension] = physical_pixel_sizes[dimension].magnitude
         pps_kwargs[dimension] = physical_pixel_sizes[dimension].magnitude
     if 'Z' not in physical_pixel_sizes:
         # Happens with single-image PhenoCycler when this code is used
@@ -116,14 +124,34 @@ def main(
     # for img_path in img_list_sorted:
     #     img_list.append(tiff.TiffFile(img_path))
 
+    # print(scale_factor_x)
+    # print(scale_factor_y)
+
     img_arr = []
-    for img in img_list:
-        img_arr.append(img.series[0].levels[level].asarray())
+    file_path = Path("/hive/users/tedz/SectionAligner/SectionAligner/new_dataset/downsizedimgs_compressed.npz")
+    if file_path.exists(): 
+        img_arr = np.load(file_path)
+    else:
+
+        for i, img in enumerate(img_list):
+            # img_2D = measure.block_reduce(img, (img.shape[0], scale_factor_x,scale_factor_y))
+            img_a = img.asarray()
+            img_arr.append(measure.block_reduce(img_a, block_size=(img_a.shape[0], scale_factor_x, scale_factor_y), func=np.sum))
+            # print(f"Data type: {img_arr[i].dtype}")
+            # print(f"Value range: {img_arr[0].min()} to {img_arr[0].max()}")
+            print('Finished ' + str(i))
+
+        # saving img_arr
+        np.savez_compressed(file_path, *img_arr)
+
+
+    # img_arr.append(img.series[0].levels[level].asarray())
 
     #downsample images - can replace orgining with this if we want to conserve memory
-    img_arr_downsample = [transform.downscale_local_mean(img, (1, scale_factor_x,scale_factor_y)) for img in img_arr]
+    # img_arr_downsample = [transform.downscale_local_mean(img, (1, scale_factor_x,scale_factor_y)) for img in img_arr]
+    # img_arr_downsample = [measure.block_reduce(img, (img.shape[0], scale_factor_x,scale_factor_y)) for img in img_arr]
 
-    img_2D = sum_channels(img_arr_downsample)
+    # img_2D = sum_channels(img_arr_downsample)
 
     # img_2D = sum_channels(img_arr)
     print('Time to read images + Downsampling + Summing all channels:', time.monotonic() - start)
@@ -133,12 +161,15 @@ def main(
     print('Preprocessing images...Thresholding, Downsample, Closing, Filling Holes, Erosion, Dilation, Connected Components')
     # time the process
     start = time.monotonic()
+
     # otsu for threshold for automation
     if thresh == None:
         # thresh = [cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[0] for img in img_2D]
-        thresh = [threshold_multiotsu(img, classes=3)[0] / 2 for img in img_2D]
+        #cast to unsafe
+        img_arr = [img.astype(np.int64, casting='unsafe') for img in img_arr]
+        thresh = [threshold_multiotsu(img, classes=3)[0] / 2 for img in img_arr]
     else:
-        thresh = [thresh for _ in img_2D]
+        thresh = [thresh for _ in img_arr]
 
     #downsample images
     # img_2D_downsample = [transform.downscale_local_mean(img, (scale_factor,scale_factor)) for img in img_2D]
@@ -147,7 +178,7 @@ def main(
 
 
     # convert to binary image by thresholding > 0
-    binary_imgs = [img > thresh[i] for i, img in enumerate(img_2D)]
+    binary_imgs = [img > thresh[i] for i, img in enumerate(img_arr)]
     # binary_imgs = [img > thresh[i] for i, img in enumerate(img_2D_downsample)]
     binary_imgs = [(img * 255).astype(np.uint8) for img in binary_imgs]
 
@@ -1476,7 +1507,7 @@ if __name__ == "__main__":
     p.add_argument('--connect', type=int, default=2, help='Connectivity for connected components, default is 2')
     p.add_argument('--output_dir', type=Path, default='./outputs', help='Output folder for saving images, default is outputs')
     # p.add_argument('--input_path', type=str, default='/hive/hubmap/data/CMU_Tools_Testing_Group/phenocycler/20c4aa0d79c0b8af37f27d436c1b42c4/QPTIFF-test/3D_image_stack.ome.tiff', help='Input folder for reading images, default is inputs')
-    p.add_argument('--input_path', type=str, default='SectionAligner/raw_data', help='Input folder for reading images, default is inputs')
+    p.add_argument('--input_path', type=str, default='new_dataset', help='Input folder for reading images, default is inputs')
     p.add_argument('--output_file_basename', type=str, default='aligned_tissue', help='Output file basename, default is aligned_tissue')
     p.add_argument('--align_upsample_factor', type=int, default=2, help='Upsample factor for aligning images, default is 2')
     p.add_argument('--optimize', type=bool, default=False, help="optimize alignment parameters using optuna")
