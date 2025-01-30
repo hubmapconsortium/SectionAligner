@@ -23,9 +23,202 @@ from skimage import morphology, transform, measure
 from skimage.filters import threshold_multiotsu
 from sklearn.preprocessing import StandardScaler
 
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from functools import partial
+
 reg = UnitRegistry()
 
 DESIRED_PHYSICAL_PIXEL_SIZE = 4.058815539828226 * reg.um
+
+def parallel_load_and_reduce(args):
+    """
+    Load and reduce a single image file.
+    
+    Args:
+        args: tuple of (file_path, scale_factor_x, scale_factor_y)
+        
+    Returns:
+        Reduced numpy array
+    """
+    img, scale_factor_x, scale_factor_y = args
+    img_a = img.asarray()
+    reduced = measure.block_reduce(
+        img_a, 
+        block_size=(img_a.shape[0], scale_factor_x, scale_factor_y), 
+        func=np.sum
+    )
+    return reduced.squeeze()
+
+def process_images_with_parallel_timing(img_arr, thresh, kernel_size, connect, n_processes=None, output_file="timing_results.json"):
+    """
+    Process images through multiple steps with parallel processing and timing
+    """
+    def print_and_save_step_time(step_name, start_time, timing_results):
+        duration = time.monotonic() - start_time
+        print(f"{step_name} completed in {duration:.4f} seconds")
+        
+        # Update timing results
+        timing_results[step_name] = duration
+        
+        # Save updated results to JSON
+        with open(output_file, 'w') as f:
+            json.dump(timing_results, f, indent=4)
+        
+        return duration
+
+    total_start = time.monotonic()
+    timing_results = {
+        "metadata": {
+            "start_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "n_processes": n_processes if n_processes else mp.cpu_count(),
+            "n_images": len(img_arr),
+            "kernel_size": kernel_size
+        },
+        "steps": {}
+    }
+    
+    current_images = img_arr
+
+    if n_processes is None:
+        n_processes = mp.cpu_count()
+
+    print(f"\nStarting parallel processing with {n_processes} processes")
+    print(f"Processing {len(img_arr)} images\n")
+
+    # Threshold calculation
+    print("Starting threshold calculation...")
+    start_time = time.monotonic()
+    if thresh is None:
+        with ProcessPoolExecutor(max_workers=n_processes) as executor:
+            print("Converting image types...")
+            current_images = list(executor.map(
+                lambda x: x.astype(np.int64, casting='unsafe'), 
+                current_images
+            ))
+            print("Calculating thresholds...")
+            thresh_values = list(executor.map(
+                lambda x: threshold_multiotsu(x, classes=3)[0] / 2, 
+                current_images
+            ))
+    else:
+        print("Using provided threshold value...")
+        thresh_values = [thresh] * len(img_arr)
+    print_and_save_step_time("Threshold calculation", start_time, timing_results["steps"])
+    print(f"Threshold values range: {min(thresh_values):.2f} to {max(thresh_values):.2f}\n")
+
+    # Binary conversion
+    print("Starting binary conversion...")
+    start_time = time.monotonic()
+    with ProcessPoolExecutor(max_workers=n_processes) as executor:
+        binary_imgs = list(executor.map(
+            lambda x: (x[0] > x[1]) * 255, 
+            zip(current_images, thresh_values)
+        ))
+        binary_imgs = list(executor.map(
+            lambda x: x.astype(np.uint8), 
+            binary_imgs
+        ))
+    print_and_save_step_time("Binary conversion", start_time, timing_results["steps"])
+    print(f"Binary images shape: {binary_imgs[0].shape}\n")
+
+    # Morphological operations
+    operations = [
+        ('Initial closing', partial(parallel_morphological_operation, kernel_size=kernel_size, operation='closing')),
+        ('Initial erosion', partial(parallel_morphological_operation, kernel_size=kernel_size, operation='erosion')),
+        ('Initial dilation', partial(parallel_morphological_operation, kernel_size=int(kernel_size/10), operation='dilation', its=2)),
+        ('Secondary erosion', partial(parallel_morphological_operation, kernel_size=int(kernel_size/10), operation='erode', its=2))
+    ]
+
+    current_images = binary_imgs
+    print("Starting morphological operations sequence...")
+    for op_name, op_func in operations:
+        print(f"\nStarting {op_name}...")
+        start_time = time.monotonic()
+        current_images = op_func(current_images, n_processes=n_processes)
+        print_and_save_step_time(op_name, start_time, timing_results["steps"])
+        print(f"{op_name} output shape: {current_images[0].shape}")
+
+    # Opening operation
+    print("\nStarting opening operation...")
+    start_time = time.monotonic()
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (int(kernel_size * 0.3), int(kernel_size * 0.3)))
+    with ProcessPoolExecutor(max_workers=n_processes) as executor:
+        current_images = list(executor.map(
+            lambda x: cv2.morphologyEx(x, cv2.MORPH_OPEN, kernel),
+            current_images
+        ))
+    print_and_save_step_time("Opening operation", start_time, timing_results["steps"])
+    print(f"Opening operation output shape: {current_images[0].shape}\n")
+
+    # Final operations
+    operations = [
+        ('Secondary closing', partial(parallel_morphological_operation, kernel_size=int(kernel_size * 2), operation='closing')),
+        ('Final dilation', partial(parallel_morphological_operation, kernel_size=kernel_size, operation='dilation'))
+    ]
+
+    for op_name, op_func in operations:
+        print(f"\nStarting {op_name}...")
+        start_time = time.monotonic()
+        current_images = op_func(current_images, n_processes=n_processes)
+        print_and_save_step_time(op_name, start_time, timing_results["steps"])
+        print(f"{op_name} output shape: {current_images[0].shape}")
+
+    # Connected components
+    print("\nStarting connected components analysis...")
+    start_time = time.monotonic()
+    with ProcessPoolExecutor(max_workers=n_processes) as executor:
+        connected_comp_imgs = list(executor.map(
+            lambda x: cv2.connectedComponentsWithStats(x, connect, cv2.CV_32S),
+            current_images
+        ))
+    print_and_save_step_time("Connected components", start_time, timing_results["steps"])
+
+    # Calculate and save total time
+    total_time = time.monotonic() - total_start
+    timing_results["total_time"] = total_time
+    timing_results["end_time"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Calculate percentages
+    timing_results["step_percentages"] = {
+        step: (duration / total_time) * 100 
+        for step, duration in timing_results["steps"].items()
+    }
+    
+    # Save final results
+    with open(output_file, 'w') as f:
+        json.dump(timing_results, f, indent=4)
+
+    # Print final timing summary
+    print("\n" + "="*50)
+    print("FINAL TIMING SUMMARY:")
+    print("="*50)
+    for step, duration in timing_results["steps"].items():
+        print(f"{step:25s}: {duration:8.4f} seconds ({(duration/total_time)*100:5.1f}%)")
+    print("-"*50)
+    print(f"Total processing time: {total_time:.4f} seconds")
+    print("="*50 + "\n")
+    print(f"Full timing results saved to {output_file}")
+
+    return connected_comp_imgs
+
+def parallel_morphological_operation(images, kernel_size, operation, its=1, n_processes=None):
+    """
+    Apply morphological operation to multiple images in parallel
+    """
+    if n_processes is None:
+        n_processes = mp.cpu_count()
+
+    operation_func = partial(morphological_operation, 
+                           kernel_size=kernel_size,
+                           operation=operation,
+                           its=its)
+
+    with ProcessPoolExecutor(max_workers=n_processes) as executor:
+        results = list(executor.map(operation_func, images))
+
+    return results
+
 
 def main(
     num_tissue: int,
@@ -41,7 +234,8 @@ def main(
     input_path: str,
     file_basename: str,
     optimize: bool,
-    crop_only: bool
+    crop_only: bool,
+    n_processes: int,
 ):
 
     start_begin = time.monotonic()
@@ -115,6 +309,9 @@ def main(
     pps = types.PhysicalPixelSizes(**pps_kwargs)
     ###########################
 
+    if n_processes is None:
+        n_processes = mp.cpu_count()
+
     print('Starting...Read images')
     #time the process
     start = time.monotonic()
@@ -129,17 +326,28 @@ def main(
 
     img_arr = []
     file_path = Path("/hive/users/tedz/SectionAligner/SectionAligner/new_dataset/downsizedimgs_compressed.npz")
+    # file_path = Path('new_dataset/downsizedimgs_compressed.npz')
+    load_params = [(img, scale_factor_x, scale_factor_y) for img in img_list]
     if file_path.exists(): 
         img_arr = np.load(file_path)
+        img_arr = [
+            img_arr[key] if img_arr[key].ndim == 2 
+            else img_arr[key].squeeze() 
+            for key in img_arr.files
+        ]
     else:
 
-        for i, img in enumerate(img_list):
-            # img_2D = measure.block_reduce(img, (img.shape[0], scale_factor_x,scale_factor_y))
-            img_a = img.asarray()
-            img_arr.append(measure.block_reduce(img_a, block_size=(img_a.shape[0], scale_factor_x, scale_factor_y), func=np.sum))
-            # print(f"Data type: {img_arr[i].dtype}")
-            # print(f"Value range: {img_arr[0].min()} to {img_arr[0].max()}")
-            print('Finished ' + str(i))
+        with ProcessPoolExecutor(max_workers=n_processes) as executor:
+            img_arr = list(executor.map(parallel_load_and_reduce, load_params))
+
+
+        # for i, img in enumerate(img_list):
+        #     # img_2D = measure.block_reduce(img, (img.shape[0], scale_factor_x,scale_factor_y))
+        #     img_a = img.asarray()
+        #     img_arr.append(measure.block_reduce(img_a, block_size=(img_a.shape[0], scale_factor_x, scale_factor_y), func=np.sum))
+        #     # print(f"Data type: {img_arr[i].dtype}")
+        #     # print(f"Value range: {img_arr[0].min()} to {img_arr[0].max()}")
+        #     print('Finished ' + str(i))
 
         # saving img_arr
         np.savez_compressed(file_path, *img_arr)
@@ -162,72 +370,74 @@ def main(
     # time the process
     start = time.monotonic()
 
+    connected_comp_imgs = process_images_with_parallel_timing(
+        img_arr, thresh, kernel_size, connect, n_processes=n_processes
+    )
+
     # otsu for threshold for automation
-    if thresh == None:
-        # thresh = [cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[0] for img in img_2D]
-        #cast to unsafe
-        img_arr = [img.astype(np.int64, casting='unsafe') for img in img_arr]
-        thresh = [threshold_multiotsu(img, classes=3)[0] / 2 for img in img_arr]
-    else:
-        thresh = [thresh for _ in img_arr]
+    # if thresh == None:
+    #     # thresh = [cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[0] for img in img_2D]
+    #     #cast to unsafe
+    #     img_arr = [img.astype(np.int64, casting='unsafe') for img in img_arr]
+    #     thresh = [threshold_multiotsu(img, classes=3)[0] / 2 for img in img_arr]
+    # else:
+    #     thresh = [thresh for _ in img_arr]
 
-    #downsample images
-    # img_2D_downsample = [transform.downscale_local_mean(img, (scale_factor,scale_factor)) for img in img_2D]
-
-
+    # #downsample images
+    # # img_2D_downsample = [transform.downscale_local_mean(img, (scale_factor,scale_factor)) for img in img_2D]
 
 
-    # convert to binary image by thresholding > 0
-    binary_imgs = [img > thresh[i] for i, img in enumerate(img_arr)]
-    # binary_imgs = [img > thresh[i] for i, img in enumerate(img_2D_downsample)]
-    binary_imgs = [(img * 255).astype(np.uint8) for img in binary_imgs]
+    # # convert to binary image by thresholding > 0
+    # binary_imgs = [img > thresh[i] for i, img in enumerate(img_arr)]
+    # # binary_imgs = [img > thresh[i] for i, img in enumerate(img_2D_downsample)]
+    # binary_imgs = [(img * 255).astype(np.uint8) for img in binary_imgs]
 
-    # plot_img_from_list(binary_imgs)
+    # # plot_img_from_list(binary_imgs)
 
-    # close images
-    closed_imgs = [morphological_operation(img, kernel_size, 'closing') for img in binary_imgs]
+    # # close images
+    # closed_imgs = [morphological_operation(img, kernel_size, 'closing') for img in binary_imgs]
 
-    #erosion to prevent connected components from merging
-    eroded_imgs = [morphological_operation(img, kernel_size, 'erosion') for img in closed_imgs]
+    # #erosion to prevent connected components from merging
+    # eroded_imgs = [morphological_operation(img, kernel_size, 'erosion') for img in closed_imgs]
 
-    # Dilate the image
-    dilated_imgs = [morphological_operation(img, int(kernel_size/10), 'dilation', its=2) for img in eroded_imgs]
+    # # Dilate the image
+    # dilated_imgs = [morphological_operation(img, int(kernel_size/10), 'dilation', its=2) for img in eroded_imgs]
 
-    # Erode the dilated image
-    eroded_imgs_2 = [morphological_operation(img, int(kernel_size/10), 'erode', its=2) for img in dilated_imgs]
+    # # Erode the dilated image
+    # eroded_imgs_2 = [morphological_operation(img, int(kernel_size/10), 'erode', its=2) for img in dilated_imgs]
 
-    # filled_imgs = [morphology.remove_small_holes(img, area_threshold=holes_thresh) for img in eroded_imgs]
-    # filled_imgs = [(img * 255).astype(np.uint8) for img in filled_imgs]
-    # filled_imgs = [morphology.remove_small_holes(img, area_threshold=holes_thresh*2) for img in closed_imgs]
-    # filled_imgs = [(img * 255).astype(np.uint8) for img in filled_imgs]
+    # # filled_imgs = [morphology.remove_small_holes(img, area_threshold=holes_thresh) for img in eroded_imgs]
+    # # filled_imgs = [(img * 255).astype(np.uint8) for img in filled_imgs]
+    # # filled_imgs = [morphology.remove_small_holes(img, area_threshold=holes_thresh*2) for img in closed_imgs]
+    # # filled_imgs = [(img * 255).astype(np.uint8) for img in filled_imgs]
 
-    # dilate image then close
-    # dilated_imgs_2 = [morphological_operation(img, kernel_size, 'dilation') for img in eroded_imgs]
-    # closed_imgs_2 = [morphological_operation(img, kernel_size, 'closing') for img in dilated_imgs_2]
+    # # dilate image then close
+    # # dilated_imgs_2 = [morphological_operation(img, kernel_size, 'dilation') for img in eroded_imgs]
+    # # closed_imgs_2 = [morphological_operation(img, kernel_size, 'closing') for img in dilated_imgs_2]
 
-    # image opening
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(int(kernel_size * 0.3), int(kernel_size * 0.3)))
-    opened_imgs = [cv2.morphologyEx(img, cv2.MORPH_OPEN, kernel) for img in eroded_imgs_2]
+    # # image opening
+    # kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(int(kernel_size * 0.3), int(kernel_size * 0.3)))
+    # opened_imgs = [cv2.morphologyEx(img, cv2.MORPH_OPEN, kernel) for img in eroded_imgs_2]
 
-    # dilate image then close
-    # dilated_imgs_2 = [morphological_operation(img, 0, 'dilation') for img in opened_imgs]
-    # eroded_imgs_3 = [morphological_operation(img, 0, 'erosion') for img in dilated_imgs_2]
-    # dilated_imgs_3 = [morphological_operation(img, 0, 'dilation') for img in eroded_imgs_3]
-    closed_imgs_2 = [morphological_operation(img, int(kernel_size * 2), 'closing') for img in opened_imgs]
+    # # dilate image then close
+    # # dilated_imgs_2 = [morphological_operation(img, 0, 'dilation') for img in opened_imgs]
+    # # eroded_imgs_3 = [morphological_operation(img, 0, 'erosion') for img in dilated_imgs_2]
+    # # dilated_imgs_3 = [morphological_operation(img, 0, 'dilation') for img in eroded_imgs_3]
+    # closed_imgs_2 = [morphological_operation(img, int(kernel_size * 2), 'closing') for img in opened_imgs]
 
-    # remove holes again
-    # filled_imgs_2 = [morphology.remove_small_holes(img, area_threshold=holes_thresh) for img in closed_imgs_2]
-    # filled_imgs_2 = [(img * 255).astype(np.uint8) for img in filled_imgs_2]
+    # # remove holes again
+    # # filled_imgs_2 = [morphology.remove_small_holes(img, area_threshold=holes_thresh) for img in closed_imgs_2]
+    # # filled_imgs_2 = [(img * 255).astype(np.uint8) for img in filled_imgs_2]
 
-    # # erode image to remove connected tissues that may have formed
-    # eroded_imgs_3 = [morphological_operation(img, int(kernel_size / 10), 'erosion', its=2) for img in closed_imgs_2]
+    # # # erode image to remove connected tissues that may have formed
+    # # eroded_imgs_3 = [morphological_operation(img, int(kernel_size / 10), 'erosion', its=2) for img in closed_imgs_2]
 
-    # # # dilate image back
-    processed_imgs = [morphological_operation(img, kernel_size, 'dilation') for img in closed_imgs_2]
-    # dilated_imgs_3 = [morphological_operation(img, int(kernel_size / 10), 'dilation', its=2) for img in eroded_imgs_3]
+    # # # # dilate image back
+    # processed_imgs = [morphological_operation(img, kernel_size, 'dilation') for img in closed_imgs_2]
+    # # dilated_imgs_3 = [morphological_operation(img, int(kernel_size / 10), 'dilation', its=2) for img in eroded_imgs_3]
 
-    ##################################################################################################################
-    connected_comp_imgs = [cv2.connectedComponentsWithStats(img, connect, cv2.CV_32S) for img in processed_imgs]
+    # ##################################################################################################################
+    # connected_comp_imgs = [cv2.connectedComponentsWithStats(img, connect, cv2.CV_32S) for img in processed_imgs]
 
     print('Time to Preprocess images:', time.monotonic() - start)
 
@@ -1512,6 +1722,7 @@ if __name__ == "__main__":
     p.add_argument('--align_upsample_factor', type=int, default=2, help='Upsample factor for aligning images, default is 2')
     p.add_argument('--optimize', type=bool, default=False, help="optimize alignment parameters using optuna")
     p.add_argument('--crop_only', type=bool, default=False, help="only identify tissues and crop, no alignment")
+    p.add_argument('--n_processes', type=int, default=1, help="number of cores to use for multiprocessing")
 
     args = p.parse_args()
 
@@ -1530,4 +1741,5 @@ if __name__ == "__main__":
         file_basename = args.output_file_basename,
         optimize= args.optimize,
         crop_only = args.crop_only,
+        n_processes = args.n_processes
     )
