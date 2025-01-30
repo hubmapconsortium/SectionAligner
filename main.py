@@ -586,10 +586,6 @@ def main(
 #         physical_pixel_sizes=pps,
 # )
 
-def func():
-
-    
-
 def align_z_slices(summed_channel, image_4d, reference_z=0, align_channel=0, params=None):
     """
     Align all z-slices in a 4D image array to a reference z-slice.
