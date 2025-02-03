@@ -101,6 +101,11 @@ def process_images_with_parallel_timing(img_arr, thresh, kernel_size, connect, n
                 lambda x: threshold_multiotsu(x, classes=3)[0] / 2, 
                 current_images
             ))
+        # thresh = [cv2.threshold(cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8), 
+        #                0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[0] for img in img_arr]
+        #cast to unsafe
+        # img_arr = [img.astype(np.int64, casting='unsafe') for img in img_arr]
+        # thresh_values = [threshold_multiotsu(img, classes=3)[0] / 2 for img in img_arr]
     else:
         print("Using provided threshold value...")
         thresh_values = [thresh] * len(img_arr)
@@ -119,6 +124,9 @@ def process_images_with_parallel_timing(img_arr, thresh, kernel_size, connect, n
             lambda x: x.astype(np.uint8), 
             binary_imgs
         ))
+    # binary_imgs = [img > thresh[i] for i, img in enumerate(img_arr)]
+    # binary_imgs = [(img * 255).astype(np.uint8) for img in binary_imgs]
+
     print_and_save_step_time("Binary conversion", start_time, timing_results["steps"])
     print(f"Binary images shape: {binary_imgs[0].shape}\n")
 
@@ -219,6 +227,190 @@ def parallel_morphological_operation(images, kernel_size, operation, its=1, n_pr
 
     return results
 
+def process_single_image(image, image_id, thresh_value, kernel_size, connect, output_file="timing_results.json"):
+    """
+    Process a single image through all steps with timing for each step
+    
+    Args:
+        image: Input image array
+        image_id: Identifier for this image
+        thresh_value: Threshold value (None for automatic)
+        kernel_size: Size of kernel for morphological operations
+        connect: Connectivity parameter for connected components
+        output_file: JSON file to store timing results
+    
+    Returns:
+        tuple: (connected components result, timing results dictionary)
+    """
+    # First load existing results if file exists
+    try:
+        with open(output_file, 'r') as f:
+            all_timing_results = json.load(f)
+            if "image_results" not in all_timing_results:  # Ensure image_results exists
+                all_timing_results["image_results"] = {}
+    except FileNotFoundError:
+        # Initialize with all required keys
+        all_timing_results = {
+            "metadata": {
+                "start_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "kernel_size": kernel_size,
+                "thresh_value": thresh_value,
+                "connect": connect
+            },
+            "image_results": {}  # Initialize empty image_results dictionary
+        }
+
+    # Initialize timing results for this image
+    timing_results = {
+        "steps": {},
+        "start_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "image_shape": image.shape
+    }
+    
+    def save_step_time(step_name, start_time, timing_results, image_id):
+        duration = time.monotonic() - start_time
+        print(f"Image {image_id} - {step_name} completed in {duration:.4f} seconds")
+        
+        # Update timing results for this image
+        timing_results["steps"][step_name] = duration
+        
+        # Calculate running total and percentages
+        total_time = sum(timing_results["steps"].values())
+        timing_results["total_time_so_far"] = total_time
+        timing_results["step_percentages"] = {
+            step: (time/total_time)*100 
+            for step, time in timing_results["steps"].items()
+        }
+        
+        # Update the main results dictionary
+        all_timing_results["image_results"][f"image_{image_id}"] = timing_results
+        
+        # Save updated results to JSON
+        with open(output_file, 'w') as f:
+            json.dump(all_timing_results, f, indent=4)
+        
+        return duration
+    # Type conversion and thresholding
+    start = time.monotonic()
+    if thresh_value is None:
+        # image = image.astype(np.int64, casting='unsafe')
+        # thresh_value = threshold_multiotsu(image, classes=3)[0] / 2
+        flat_img = image.ravel()
+        sample_size = min(1000000, len(flat_img))  # Cap at 1M pixels
+        sample = np.random.choice(flat_img, size=sample_size, replace=False)
+        thresh_value = threshold_multiotsu(sample, classes=3)[0] / 2
+    save_step_time("Type conversion and thresholding", start, timing_results, image_id)
+    timing_results["computed_threshold"] = float(thresh_value)  # Store the computed threshold
+    
+    # Binary conversion
+    start = time.monotonic()
+    binary_img = (image > thresh_value) * 255
+    binary_img = binary_img.astype(np.uint8)
+    save_step_time("Binary conversion", start, timing_results, image_id)
+    
+    # Initial closing
+    start = time.monotonic()
+    closed_img = morphological_operation(binary_img, kernel_size, 'closing')
+    save_step_time("Initial closing", start, timing_results, image_id)
+    
+    # Initial erosion
+    start = time.monotonic()
+    eroded_img = morphological_operation(closed_img, kernel_size, 'erosion')
+    save_step_time("Initial erosion", start, timing_results, image_id)
+    
+    # Initial dilation
+    start = time.monotonic()
+    dilated_img = morphological_operation(eroded_img, int(kernel_size/10), 'dilation', its=2)
+    save_step_time("Initial dilation", start, timing_results, image_id)
+    
+    # Secondary erosion
+    start = time.monotonic()
+    eroded_img_2 = morphological_operation(dilated_img, int(kernel_size/10), 'erode', its=2)
+    save_step_time("Secondary erosion", start, timing_results, image_id)
+    
+    # Opening operation
+    start = time.monotonic()
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (int(kernel_size * 0.3), int(kernel_size * 0.3)))
+    opened_img = cv2.morphologyEx(eroded_img_2, cv2.MORPH_OPEN, kernel)
+    save_step_time("Opening operation", start, timing_results, image_id)
+    
+    # Final closing
+    start = time.monotonic()
+    closed_img_2 = morphological_operation(opened_img, int(kernel_size * 2), 'closing')
+    save_step_time("Final closing", start, timing_results, image_id)
+    
+    # Final dilation
+    start = time.monotonic()
+    processed_img = morphological_operation(closed_img_2, kernel_size, 'dilation')
+    save_step_time("Final dilation", start, timing_results, image_id)
+    
+    # Connected components
+    start = time.monotonic()
+    connected_comp = cv2.connectedComponentsWithStats(processed_img, connect, cv2.CV_32S)
+    save_step_time("Connected components", start, timing_results, image_id)
+    
+    # Add end time and final statistics
+    timing_results["end_time"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    timing_results["total_time"] = sum(timing_results["steps"].values())
+    timing_results["n_components"] = connected_comp[0]  # Store number of components found
+    
+    # Update final results
+    all_timing_results["image_results"][f"image_{image_id}"] = timing_results
+    
+    # Calculate overall statistics if multiple images have been processed
+    if len(all_timing_results["image_results"]) > 1:
+        all_timing_results["statistics"] = calculate_timing_statistics(all_timing_results["image_results"])
+    
+    # Save final results
+    with open(output_file, 'w') as f:
+        json.dump(all_timing_results, f, indent=4)
+    
+    # Print final summary for this image
+    print(f"\n{'='*50}")
+    print(f"FINAL TIMING SUMMARY FOR IMAGE {image_id}:")
+    print(f"{'='*50}")
+    for step, duration in timing_results["steps"].items():
+        print(f"{step:30s}: {duration:8.4f} seconds ({timing_results['step_percentages'][step]:5.1f}%)")
+    print(f"{'-'*50}")
+    print(f"Total processing time: {timing_results['total_time']:.4f} seconds")
+    print(f"Number of components: {timing_results['n_components']}")
+    print(f"{'='*50}\n")
+    
+    return connected_comp
+
+def calculate_timing_statistics(image_results):
+    """Calculate statistics across all processed images"""
+    all_times = defaultdict(list)
+    total_times = []
+    
+    # Collect all times for each step
+    for image_data in image_results.values():
+        for step, time in image_data["steps"].items():
+            all_times[step].append(time)
+        total_times.append(image_data["total_time_so_far"])
+    
+    # Calculate statistics
+    statistics = {
+        "per_step": {
+            step: {
+                "mean": float(np.mean(times)),
+                "std": float(np.std(times)),
+                "min": float(np.min(times)),
+                "max": float(np.max(times)),
+                "median": float(np.median(times))
+            }
+            for step, times in all_times.items()
+        },
+        "total_time": {
+            "mean": float(np.mean(total_times)),
+            "std": float(np.std(total_times)),
+            "min": float(np.min(total_times)),
+            "max": float(np.max(total_times)),
+            "median": float(np.median(total_times))
+        }
+    }
+    
+    return statistics
 
 def main(
     num_tissue: int,
@@ -370,9 +562,18 @@ def main(
     # time the process
     start = time.monotonic()
 
-    connected_comp_imgs = process_images_with_parallel_timing(
-        img_arr, thresh, kernel_size, connect, n_processes=n_processes
-    )
+    # connected_comp_imgs = process_images_with_parallel_timing(
+    #     img_arr, thresh, kernel_size, connect, n_processes=n_processes
+    # )
+
+    connected_comp_imgs = []
+    for i, image in enumerate(img_arr):
+        print(f"\nProcessing image {i}/{len(img_arr)-1}")
+        result = process_single_image(
+            image, i, thresh, kernel_size, connect
+        )
+        connected_comp_imgs.append(result)
+    # connected_comp_imgs = process_single_image(image, thresh_value, kernel_size, connect)
 
     # otsu for threshold for automation
     # if thresh == None:
