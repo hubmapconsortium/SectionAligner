@@ -114,6 +114,8 @@ def main(
         # only for tissue cropping
         print('Z physical size not found; assigning 1µm')
         pps_kwargs['Z'] = 1
+    else:
+        pps_kwargs['Z'] = physical_pixel_sizes[dimension].magnitude
     pps = types.PhysicalPixelSizes(**pps_kwargs)
     ###########################
 
