@@ -17,6 +17,9 @@ from aicsimageio.writers import OmeTiffWriter
 from numpy.fft import fft
 from ome_types import from_xml, to_xml
 from ome_utils import get_converted_physical_size, reg
+
+# Add alias for μm to the unit registry
+# reg.define('@alias micrometer = μm')
 from pint import Quantity
 from scipy import stats
 from scipy.spatial.distance import cdist
@@ -89,7 +92,7 @@ def main(
     # padding = 20
     # connect = 2
 
-    # pixel_size = [0.5073519424785282, 0.5073519424785282] #microns
+    pixel_size = [0.5073519424785282, 0.5073519424785282] #microns
 
     physical_pixel_sizes_per_image: list[dict[str, Quantity]] = [get_converted_physical_size(image) for image in img_list]
     # Read physical pixel size for all images, find unique sizes for each dimension
@@ -1058,7 +1061,7 @@ def compute_bounding_box(imgs):
 def detect_tissues(cc_img_list, num_tissue=8):
 
     filtered_imgs = []
-    new_values = np.arange(0, num_tissue + 1)  # New label values for the filtered images
+    new_values = np.arange(1, num_tissue + 1)  # New label values for the filtered images
 
     for cc_img in cc_img_list:
         iso_tissue = []
@@ -1075,9 +1078,15 @@ def detect_tissues(cc_img_list, num_tissue=8):
         sort_stats = stats[:, cv2.CC_STAT_AREA].copy()
         sort_stats.sort()
         # Filter based on size
-        min_size = sort_stats[-num_tissue - 1]  # Set your minimum size threshold
+        min_size = sort_stats[-num_tissue] - 1  # Set your minimum size threshold
 
-        tissue_values = nunique[stats[:, cv2.CC_STAT_AREA] >= min_size]
+        # filter out the background from stats
+        filter_stats = stats[:, cv2.CC_STAT_AREA].copy()
+        filter_stats = filter_stats[filter_stats > 0]
+
+        assert(len(filter_stats) == len(nunique))
+
+        tissue_values = nunique[filter_stats >= min_size]
 
         # Create a new image that will be the filtered result
         new_labels = filter_array(labels, tissue_values)
@@ -1480,7 +1489,7 @@ def save_arrays_as_images(arrays, use_colormap=False, output_folder='figures', f
 if __name__ == "__main__":
 
     p = ArgumentParser()
-    p.add_argument('--num_tissue', type=int, default=8, help='Number of tissues to detect, default is 8')
+    p.add_argument('--num_tissue', type=int, default=1, help='Number of tissues to detect, default is 8')
     p.add_argument('--level', type=int, default=0, help='Pyrmaid level of the image, default is 0 which is the original image size')
     p.add_argument('--thresh', type=int, default=None, help='Threshold value for binarization, default is done by otsu')
     p.add_argument('--kernel_size', type=int, default=100, help='Size of the structuring element used for closing, default is 0')
@@ -1489,12 +1498,12 @@ if __name__ == "__main__":
     p.add_argument('--padding', type=int, default=50, help='Padding for bounding box, default is 20')
     p.add_argument('--connect', type=int, default=2, help='Connectivity for connected components, default is 2')
     p.add_argument('--output_dir', type=Path, default='./outputs', help='Output folder for saving images, default is outputs')
-    # p.add_argument('--input_path', type=str, default='/hive/hubmap/data/CMU_Tools_Testing_Group/phenocycler/20c4aa0d79c0b8af37f27d436c1b42c4/QPTIFF-test/3D_image_stack.ome.tiff', help='Input folder for reading images, default is inputs')
-    p.add_argument('--input_path', type=str, default='SectionAligner/raw_data', help='Input folder for reading images, default is inputs')
+    p.add_argument('--input_path', type=str, default='/hive/hubmap/data/CMU_Tools_Testing_Group/phenocycler/sectionaligner-failure/HBM473.DQBB.362/converted.ome.tiff', help='Input folder for reading images, default is inputs')
+    # p.add_argument('--input_path', type=str, default='SectionAligner/raw_data', help='Input folder for reading images, default is inputs')
     p.add_argument('--output_file_basename', type=str, default='aligned_tissue', help='Output file basename, default is aligned_tissue')
     p.add_argument('--align_upsample_factor', type=int, default=2, help='Upsample factor for aligning images, default is 2')
     p.add_argument('--optimize', action='store_true', default=False, help='optimize alignment parameters using optuna')
-    p.add_argument('--crop_only', action='store_true', default=False, help='only identify tissues and crop, no alignment')
+    p.add_argument('--crop_only', action='store_true', default=True, help='only identify tissues and crop, no alignment')
 
     args = p.parse_args()
 
