@@ -12,8 +12,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import optuna
 import tifffile as tiff
-from aicsimageio import types
-from aicsimageio.writers import OmeTiffWriter
+import bioio
+from bioio.writers import OmeTiffWriter
 from numpy.fft import fft
 from ome_types import from_xml, to_xml
 from ome_utils import get_converted_physical_size, reg
@@ -119,7 +119,7 @@ def main(
         pps_kwargs['Z'] = 1
     else:
         pps_kwargs['Z'] = physical_pixel_sizes[dimension].magnitude
-    pps = types.PhysicalPixelSizes(**pps_kwargs)
+    pps = bioio.PhysicalPixelSizes(**pps_kwargs)
     ###########################
 
     print('Starting...Read images')

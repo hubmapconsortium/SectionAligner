@@ -3,7 +3,9 @@ numpy
 matplotlib
 scikit-image
 opencv-python-headless
-aicsimageio
+bioio
+bioio-ome-tiff
+bioio-tifffile
 optuna
 pint
 scipy
@@ -11,4 +13,3 @@ scikit-learn
 ome-types
 git+https://github.com/hubmapconsortium/ome-utils
 lxml
-
