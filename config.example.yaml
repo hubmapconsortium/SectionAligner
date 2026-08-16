@@ -1,0 +1,102 @@
+# =====================================================================
+# SectionAligner pipeline - configuration
+# ---------------------------------------------------------------------
+# Copy this file (e.g. to config.yaml), edit the paths/markers for your
+# dataset, then run:
+#     python run_pipeline.py --config config.yaml --dry-run
+#
+# All five stages run tools from this repository, so this file only
+# describes your data, parameters and cluster - never where code lives.
+# =====================================================================
+
+# Where all pipeline outputs go (created if missing). One directory per run.
+work_dir: ./runs/run1
+
+# Raw input: directory of *.qptiff z-slices + channelnames.txt (or MarkerList.txt).
+# Required for stage 1 (stack). Relative paths are resolved from where you run
+# run_pipeline.py.
+input_dir: ./new_dataset
+
+# local  = run stages sequentially on this machine (subprocesses)
+# slurm  = submit one job/array per stage per tissue, chained with dependencies
+executor: local
+
+# --- Conda environment used by each stage (the only machine-specific setting;
+#     the stage code itself is always the copy in this repo) ---
+conda:
+  stack:   bigstream        # tissue_pipeline/run_pipeline.py
+  align:   3DCellComposer   # zalign/align_image.py
+  tile:    hubmap           # 3Dtiler.py
+  segment: 3DCellComposer   # 3DCellComposer/run_3DCellComposer.py
+  stitch:  hubmap           # 3Dstitcher.py
+
+# ---------------------------------------------------------------------
+# Stage 1 - tissue matching & stacking
+# ---------------------------------------------------------------------
+stack:
+  num_tissues: 8      # expected number of tissues per z-slice image
+  padding: 50         # full-res pixels of padding around each tissue bbox
+  skip_crop: false    # true = segmentation/matching QC only, no full-res crop
+
+# ---------------------------------------------------------------------
+# Stage 2 - z-slice alignment (zalign/align_image.py)
+# ---------------------------------------------------------------------
+align:
+  all_consecutive: true     # compose consecutive transforms; warp all slices into z0
+  save_flow: true           # save per-pair / cumulative sampling maps
+  skip_optical_flow: false  # true = rigid only (faster, less accurate)
+
+# ---------------------------------------------------------------------
+# Stage 3 - 3D tiling (3Dtiler.py)
+# ---------------------------------------------------------------------
+tile:
+  num_tiles: 100    # arranged into an ~square grid; 100 -> 10x10. Use a perfect square.
+  overlap: 25       # pixel overlap between adjacent tiles (Y and X)
+  prefix: tile      # tile filename / metadata prefix
+
+# ---------------------------------------------------------------------
+# Stage 4 - 3D cell segmentation (run_3DCellComposer.py, per tile)
+# ---------------------------------------------------------------------
+segment:
+  # Marker names MUST match entries in channel_names_file (one per line).
+  nucleus_markers:   "DAPI"
+  cytoplasm_markers: "VIM"
+  membrane_markers:  "CD45,CD34,CD90,CD11C"
+  segmentation_method: deepcell        # deepcell | cellpose | custom
+  # Leave blank to use the same marker list stage 1 reads, i.e.
+  # <input_dir>/channelnames.txt or <input_dir>/MarkerList.txt.
+  channel_names_file: ""
+  skip_blender: true                   # skip Blender mesh generation (faster)
+  skip_eval: false                     # skip CellSegmentationEvaluator scoring
+  skip_yz: false                       # true = only XY + XZ slicing
+  clear_cache: false                   # delete cached .pkl from a prior run first
+  # DeepCell/Mesmer token. Leave blank to inherit it from the environment
+  # variable named below (recommended: `export DEEPCELL_ACCESS_TOKEN=...`).
+  deepcell_token: ""
+  deepcell_token_env: DEEPCELL_ACCESS_TOKEN
+  # Any extra run_3DCellComposer.py args, appended verbatim, e.g.:
+  # extra_args: ["--downsample_vector", "1,2,2", "--min_slices", "3"]
+  extra_args: []
+
+# ---------------------------------------------------------------------
+# Stage 5 - stitch tiles back into a full 3D volume (3Dstitcher.py)
+# ---------------------------------------------------------------------
+stitch:
+  relabel: global                      # global = globally-unique labels; local = keep tile labels
+  source_masks:                        # which per-tile output(s) to stitch
+    - 3D_cell_mask.tif
+    # - 3D_nuclear_mask.tif
+
+# ---------------------------------------------------------------------
+# SLURM settings (only used when executor: slurm).
+# Defaults come from the stages' existing job scripts. Adjust partitions,
+# memory and time for your cluster.
+# ---------------------------------------------------------------------
+slurm:
+  account: null              # or "my_account"
+  extra_directives: []       # e.g. ["--mail-type=END", "--mail-user=me@x.org"]
+  stack:   {partition: WORKSPACES-CPU, cpus: 8,  mem: 500G,  time: "24:00:00"}
+  align:   {partition: batch,          cpus: 16, mem: 200G,  time: "48:00:00"}
+  tile:    {partition: WORKSPACES-CPU, cpus: 8,  mem: 3500G, time: "12:00:00"}
+  segment: {partition: GPU,            cpus: 8,  mem: 64G,   time: "24:00:00", gres: "gpu:1"}
+  stitch:  {partition: WORKSPACES-CPU, cpus: 8,  mem: 500G,  time: "12:00:00"}

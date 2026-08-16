@@ -9,5 +9,13 @@ pint
 scipy
 scikit-learn
 ome-types
+tqdm
+PyYAML
 
 git+https://github.com/hubmapconsortium/ome-utils@v0.2
+
+# The five-stage pipeline (run_pipeline.py) only needs PyYAML itself: each stage
+# is launched as a subprocess in its own conda environment. Per-stage
+# dependencies live in tissue_pipeline/requirements.txt (stage 1),
+# zalign/requirements.txt (stage 2) and 3DCellComposer/requirements.txt
+# (stage 4); stages 3 and 5 use the packages listed above.
