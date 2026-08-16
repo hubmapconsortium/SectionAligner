@@ -330,7 +330,7 @@ def main():
 						help="delete saved intermediate files from a previous run from the results_path before starting")
 	parser.add_argument('--min_slices', type=int, default="2",
 						help="minimum number of z slices required to be considered as a 3D cell")
-	parser.add_argument('--channel_names', type=str, default="/hive/users/tedz/3DCellComposer/Tissue_1_tiles/target/MarkerList.txt", 
+	parser.add_argument('--channel_names', type=str, default=None,
 					 	help= 'Path to the channel names file')
 	parser.add_argument('--pixel_size', type=list, default=None, #[0.507, 0.507, 1.0],
 						help='Pixel size in microns')
