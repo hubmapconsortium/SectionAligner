@@ -1,0 +1,4 @@
+[submodule "3DCellComposer"]
+	path = 3DCellComposer
+	url = git@github.com:hubmapconsortium/3DCellComposer.git
+	branch = sectionaligner-pipeline

@@ -1,0 +1,8 @@
+# Stage 2 (z-slice alignment) dependencies.
+# These are already present in the conda env named by `conda.align` in
+# config.yaml; install only if you are building that env from scratch.
+numpy>=1.21
+opencv-python>=4.5
+scipy>=1.7
+scikit-image>=0.19
+tifffile>=2023.2

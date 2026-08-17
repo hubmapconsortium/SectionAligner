@@ -19,13 +19,556 @@ from ome_utils import get_converted_physical_size
 from pint import Quantity, UnitRegistry
 from scipy import stats
 from scipy.spatial.distance import cdist
-from skimage import morphology, transform
+from skimage import morphology, transform, measure
 from skimage.filters import threshold_multiotsu
 from sklearn.preprocessing import StandardScaler
+
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from functools import partial
 
 reg = UnitRegistry()
 
 DESIRED_PHYSICAL_PIXEL_SIZE = 4.058815539828226 * reg.um
+
+def parallel_load_and_reduce(args):
+    """
+    Load and reduce a single image file.
+    
+    Args:
+        args: tuple of (file_path, scale_factor_x, scale_factor_y)
+        
+    Returns:
+        Reduced numpy array
+    """
+    img, scale_factor_x, scale_factor_y = args
+    img_a = img.asarray()
+    reduced = measure.block_reduce(
+        img_a, 
+        block_size=(img_a.shape[0], scale_factor_x, scale_factor_y), 
+        func=np.sum
+    )
+    return reduced.squeeze()
+
+def process_images_with_parallel_timing(img_arr, thresh, kernel_size, connect, n_processes=None, output_file="timing_results.json"):
+    """
+    Process images through multiple steps with parallel processing and timing
+    """
+    def print_and_save_step_time(step_name, start_time, timing_results):
+        duration = time.monotonic() - start_time
+        print(f"{step_name} completed in {duration:.4f} seconds")
+        
+        # Update timing results
+        timing_results[step_name] = duration
+        
+        # Save updated results to JSON
+        with open(output_file, 'w') as f:
+            json.dump(timing_results, f, indent=4)
+        
+        return duration
+
+    total_start = time.monotonic()
+    timing_results = {
+        "metadata": {
+            "start_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "n_processes": n_processes if n_processes else mp.cpu_count(),
+            "n_images": len(img_arr),
+            "kernel_size": kernel_size
+        },
+        "steps": {}
+    }
+    
+    current_images = img_arr
+
+    if n_processes is None:
+        n_processes = mp.cpu_count()
+
+    print(f"\nStarting parallel processing with {n_processes} processes")
+    print(f"Processing {len(img_arr)} images\n")
+
+    # Threshold calculation
+    print("Starting threshold calculation...")
+    start_time = time.monotonic()
+    if thresh is None:
+        with ProcessPoolExecutor(max_workers=n_processes) as executor:
+            print("Converting image types...")
+            current_images = list(executor.map(
+                lambda x: x.astype(np.int64, casting='unsafe'), 
+                current_images
+            ))
+            print("Calculating thresholds...")
+            thresh_values = list(executor.map(
+                lambda x: threshold_multiotsu(x, classes=3)[0] / 2, 
+                current_images
+            ))
+        # thresh = [cv2.threshold(cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8), 
+        #                0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[0] for img in img_arr]
+        #cast to unsafe
+        # img_arr = [img.astype(np.int64, casting='unsafe') for img in img_arr]
+        # thresh_values = [threshold_multiotsu(img, classes=3)[0] / 2 for img in img_arr]
+    else:
+        print("Using provided threshold value...")
+        thresh_values = [thresh] * len(img_arr)
+    print_and_save_step_time("Threshold calculation", start_time, timing_results["steps"])
+    print(f"Threshold values range: {min(thresh_values):.2f} to {max(thresh_values):.2f}\n")
+
+    # Binary conversion
+    print("Starting binary conversion...")
+    start_time = time.monotonic()
+    with ProcessPoolExecutor(max_workers=n_processes) as executor:
+        binary_imgs = list(executor.map(
+            lambda x: (x[0] > x[1]) * 255, 
+            zip(current_images, thresh_values)
+        ))
+        binary_imgs = list(executor.map(
+            lambda x: x.astype(np.uint8), 
+            binary_imgs
+        ))
+    # binary_imgs = [img > thresh[i] for i, img in enumerate(img_arr)]
+    # binary_imgs = [(img * 255).astype(np.uint8) for img in binary_imgs]
+
+    print_and_save_step_time("Binary conversion", start_time, timing_results["steps"])
+    print(f"Binary images shape: {binary_imgs[0].shape}\n")
+
+    # Morphological operations
+    operations = [
+        ('Initial closing', partial(parallel_morphological_operation, kernel_size=kernel_size, operation='closing')),
+        ('Initial erosion', partial(parallel_morphological_operation, kernel_size=kernel_size, operation='erosion')),
+        ('Initial dilation', partial(parallel_morphological_operation, kernel_size=int(kernel_size/10), operation='dilation', its=2)),
+        ('Secondary erosion', partial(parallel_morphological_operation, kernel_size=int(kernel_size/10), operation='erode', its=2))
+    ]
+
+    current_images = binary_imgs
+    print("Starting morphological operations sequence...")
+    for op_name, op_func in operations:
+        print(f"\nStarting {op_name}...")
+        start_time = time.monotonic()
+        current_images = op_func(current_images, n_processes=n_processes)
+        print_and_save_step_time(op_name, start_time, timing_results["steps"])
+        print(f"{op_name} output shape: {current_images[0].shape}")
+
+    # Opening operation
+    print("\nStarting opening operation...")
+    start_time = time.monotonic()
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (int(kernel_size * 0.3), int(kernel_size * 0.3)))
+    with ProcessPoolExecutor(max_workers=n_processes) as executor:
+        current_images = list(executor.map(
+            lambda x: cv2.morphologyEx(x, cv2.MORPH_OPEN, kernel),
+            current_images
+        ))
+    print_and_save_step_time("Opening operation", start_time, timing_results["steps"])
+    print(f"Opening operation output shape: {current_images[0].shape}\n")
+
+    # Final operations
+    operations = [
+        ('Secondary closing', partial(parallel_morphological_operation, kernel_size=int(kernel_size * 2), operation='closing')),
+        ('Final dilation', partial(parallel_morphological_operation, kernel_size=kernel_size, operation='dilation'))
+    ]
+
+    for op_name, op_func in operations:
+        print(f"\nStarting {op_name}...")
+        start_time = time.monotonic()
+        current_images = op_func(current_images, n_processes=n_processes)
+        print_and_save_step_time(op_name, start_time, timing_results["steps"])
+        print(f"{op_name} output shape: {current_images[0].shape}")
+
+    # Connected components
+    print("\nStarting connected components analysis...")
+    start_time = time.monotonic()
+    with ProcessPoolExecutor(max_workers=n_processes) as executor:
+        connected_comp_imgs = list(executor.map(
+            lambda x: cv2.connectedComponentsWithStats(x, connect, cv2.CV_32S),
+            current_images
+        ))
+    print_and_save_step_time("Connected components", start_time, timing_results["steps"])
+
+    # Calculate and save total time
+    total_time = time.monotonic() - total_start
+    timing_results["total_time"] = total_time
+    timing_results["end_time"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Calculate percentages
+    timing_results["step_percentages"] = {
+        step: (duration / total_time) * 100 
+        for step, duration in timing_results["steps"].items()
+    }
+    
+    # Save final results
+    with open(output_file, 'w') as f:
+        json.dump(timing_results, f, indent=4)
+
+    # Print final timing summary
+    print("\n" + "="*50)
+    print("FINAL TIMING SUMMARY:")
+    print("="*50)
+    for step, duration in timing_results["steps"].items():
+        print(f"{step:25s}: {duration:8.4f} seconds ({(duration/total_time)*100:5.1f}%)")
+    print("-"*50)
+    print(f"Total processing time: {total_time:.4f} seconds")
+    print("="*50 + "\n")
+    print(f"Full timing results saved to {output_file}")
+
+    return connected_comp_imgs
+
+def parallel_morphological_operation(images, kernel_size, operation, its=1, n_processes=None):
+    """
+    Apply morphological operation to multiple images in parallel
+    """
+    if n_processes is None:
+        n_processes = mp.cpu_count()
+
+    operation_func = partial(morphological_operation, 
+                           kernel_size=kernel_size,
+                           operation=operation,
+                           its=its)
+
+    with ProcessPoolExecutor(max_workers=n_processes) as executor:
+        results = list(executor.map(operation_func, images))
+
+    return results
+
+def process_single_image(image, image_id, thresh_value, kernel_size, connect, output_file="timing_results.json", save_debug_images=True, debug_output_folder="debug_morphology", use_watershed=True):
+    """
+    Process a single image through all steps with timing for each step
+    
+    Args:
+        image: Input image array
+        image_id: Identifier for this image
+        thresh_value: Threshold value (None for automatic)
+        kernel_size: Size of kernel for morphological operations
+        connect: Connectivity parameter for connected components
+        output_file: JSON file to store timing results
+        save_debug_images: Whether to save PNG images of each morphological step
+        debug_output_folder: Folder to save debug images
+        use_watershed: Whether to use watershed segmentation to separate touching tissues
+    
+    Returns:
+        tuple: (connected components result, timing results dictionary)
+    """
+    # Create debug output folder if saving images
+    if save_debug_images:
+        os.makedirs(debug_output_folder, exist_ok=True)
+    # First load existing results if file exists
+    try:
+        with open(output_file, 'r') as f:
+            all_timing_results = json.load(f)
+            if "image_results" not in all_timing_results:  # Ensure image_results exists
+                all_timing_results["image_results"] = {}
+    except FileNotFoundError:
+        # Initialize with all required keys
+        all_timing_results = {
+            "metadata": {
+                "start_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "kernel_size": kernel_size,
+                "thresh_value": thresh_value,
+                "connect": connect
+            },
+            "image_results": {}  # Initialize empty image_results dictionary
+        }
+
+    # Initialize timing results for this image
+    timing_results = {
+        "steps": {},
+        "start_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "image_shape": image.shape
+    }
+    
+    # Save raw image before any processing
+    if save_debug_images:
+        # Normalize the raw image to 0-255 range for visualization
+        raw_img_normalized = cv2.normalize(image.squeeze(), None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        cv2.imwrite(f"{debug_output_folder}/image_{image_id}_step0_raw_image.png", raw_img_normalized)
+    
+    def save_step_time(step_name, start_time, timing_results, image_id):
+        duration = time.monotonic() - start_time
+        print(f"Image {image_id} - {step_name} completed in {duration:.4f} seconds")
+        
+        # Update timing results for this image
+        timing_results["steps"][step_name] = duration
+        
+        # Calculate running total and percentages
+        total_time = sum(timing_results["steps"].values())
+        timing_results["total_time_so_far"] = total_time
+        timing_results["step_percentages"] = {
+            step: (time/total_time)*100 
+            for step, time in timing_results["steps"].items()
+        }
+        
+        # Update the main results dictionary
+        all_timing_results["image_results"][f"image_{image_id}"] = timing_results
+        
+        # Save updated results to JSON
+        with open(output_file, 'w') as f:
+            json.dump(all_timing_results, f, indent=4)
+        
+        return duration
+    # Type conversion and thresholding
+    start = time.monotonic()
+    if thresh_value is None:
+        # image = image.astype(np.int64, casting='unsafe')
+        # thresh_value = threshold_multiotsu(image, classes=3)[0] / 2
+        flat_img = image.ravel()
+        sample_size = min(1000000, len(flat_img))  # Cap at 1M pixels
+        sample = np.random.choice(flat_img, size=sample_size, replace=False)
+        sample = sample.astype(np.int64, casting='unsafe')
+        thresh_value = threshold_multiotsu(sample, classes=3)[0] / 2
+    save_step_time("Type conversion and thresholding", start, timing_results, image_id)
+    timing_results["computed_threshold"] = float(thresh_value)  # Store the computed threshold
+    
+    # Binary conversion
+    start = time.monotonic()
+    binary_img = (image > thresh_value) * 255
+    binary_img = binary_img.astype(np.uint8)
+    # Ensure the image is 2D (squeeze out any extra dimensions)
+    if binary_img.ndim > 2:
+        binary_img = np.squeeze(binary_img)
+    binary_img = np.ascontiguousarray(binary_img)
+    save_step_time("Binary conversion", start, timing_results, image_id)
+    
+    # Save thresholding result
+    if save_debug_images:
+        cv2.imwrite(f"{debug_output_folder}/image_{image_id}_step1_thresholding.png", binary_img)
+    
+    # Initial closing
+    start = time.monotonic()
+    closed_img = morphological_operation(binary_img, kernel_size, 'closing')
+    save_step_time("Initial closing", start, timing_results, image_id)
+    if save_debug_images:
+        cv2.imwrite(f"{debug_output_folder}/image_{image_id}_step2_initial_closing.png", closed_img)
+    
+    # Initial erosion
+    start = time.monotonic()
+    eroded_img = morphological_operation(closed_img, kernel_size, 'erosion')
+    save_step_time("Initial erosion", start, timing_results, image_id)
+    if save_debug_images:
+        cv2.imwrite(f"{debug_output_folder}/image_{image_id}_step3_initial_erosion.png", eroded_img)
+    
+    # Initial dilation
+    start = time.monotonic()
+    dilated_img = morphological_operation(eroded_img, int(kernel_size/10), 'dilation', its=2)
+    save_step_time("Initial dilation", start, timing_results, image_id)
+    if save_debug_images:
+        cv2.imwrite(f"{debug_output_folder}/image_{image_id}_step4_initial_dilation.png", dilated_img)
+    
+    # Secondary erosion
+    start = time.monotonic()
+    eroded_img_2 = morphological_operation(dilated_img, int(kernel_size/10), 'erode', its=2)
+    save_step_time("Secondary erosion", start, timing_results, image_id)
+    if save_debug_images:
+        cv2.imwrite(f"{debug_output_folder}/image_{image_id}_step5_secondary_erosion.png", eroded_img_2)
+    
+    # Opening operation
+    start = time.monotonic()
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (int(kernel_size * 0.3), int(kernel_size * 0.3)))
+    opened_img = cv2.morphologyEx(eroded_img_2, cv2.MORPH_OPEN, kernel)
+    save_step_time("Opening operation", start, timing_results, image_id)
+    if save_debug_images:
+        cv2.imwrite(f"{debug_output_folder}/image_{image_id}_step6_opening.png", opened_img)
+    
+    # Final closing
+    start = time.monotonic()
+    closed_img_2 = morphological_operation(opened_img, int(kernel_size * 2), 'closing')
+    save_step_time("Final closing", start, timing_results, image_id)
+    if save_debug_images:
+        cv2.imwrite(f"{debug_output_folder}/image_{image_id}_step7_final_closing.png", closed_img_2)
+    
+    # Final dilation
+    start = time.monotonic()
+    processed_img = morphological_operation(closed_img_2, kernel_size, 'dilation')
+    save_step_time("Final dilation", start, timing_results, image_id)
+    if save_debug_images:
+        cv2.imwrite(f"{debug_output_folder}/image_{image_id}_step8_final_dilation.png", processed_img)
+    
+    # Apply watershed to separate touching tissues (optional)
+    if use_watershed:
+        start = time.monotonic()
+        # Distance transform
+        dist_transform = cv2.distanceTransform(processed_img, cv2.DIST_L2, 5)
+        if save_debug_images:
+            dist_normalized = cv2.normalize(dist_transform, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+            cv2.imwrite(f"{debug_output_folder}/image_{image_id}_step8a_distance_transform.png", dist_normalized)
+        
+        # Find sure foreground (peaks in distance transform)
+        ret, sure_fg = cv2.threshold(dist_transform, 0.5 * dist_transform.max(), 255, 0)
+        sure_fg = np.uint8(sure_fg)
+        if save_debug_images:
+            cv2.imwrite(f"{debug_output_folder}/image_{image_id}_step8b_sure_foreground.png", sure_fg)
+        
+        # Find sure background (dilate the image)
+        sure_bg = cv2.dilate(processed_img, np.ones((3,3), np.uint8), iterations=3)
+        
+        # Find unknown region
+        sure_fg_uint8 = np.uint8(sure_fg)
+        unknown = cv2.subtract(sure_bg, sure_fg_uint8)
+        if save_debug_images:
+            cv2.imwrite(f"{debug_output_folder}/image_{image_id}_step8c_unknown_region.png", unknown)
+        
+        # Label markers for watershed
+        ret, markers = cv2.connectedComponents(sure_fg)
+        markers = markers + 1  # Add 1 so background is not 0
+        markers[unknown == 255] = 0
+        
+        # Apply watershed
+        # Need to convert to 3-channel for watershed
+        processed_img_3ch = cv2.cvtColor(processed_img, cv2.COLOR_GRAY2BGR)
+        markers = cv2.watershed(processed_img_3ch, markers)
+        
+        # Convert watershed result to binary image with separated tissues
+        watershed_img = np.zeros_like(processed_img)
+        watershed_img[markers > 1] = 255  # Exclude background (1) and boundaries (-1)
+        
+        if save_debug_images:
+            # Visualize watershed boundaries
+            watershed_vis = processed_img_3ch.copy()
+            watershed_vis[markers == -1] = [0, 0, 255]  # Mark boundaries in red
+            cv2.imwrite(f"{debug_output_folder}/image_{image_id}_step8d_watershed_boundaries.png", watershed_vis)
+            cv2.imwrite(f"{debug_output_folder}/image_{image_id}_step8e_watershed_result.png", watershed_img)
+        
+        save_step_time("Watershed segmentation", start, timing_results, image_id)
+        
+        # Connected components on watershed result
+        start = time.monotonic()
+        connected_comp = cv2.connectedComponentsWithStats(watershed_img, connect, cv2.CV_32S)
+        save_step_time("Connected components", start, timing_results, image_id)
+    else:
+        # Connected components without watershed
+        start = time.monotonic()
+        connected_comp = cv2.connectedComponentsWithStats(processed_img, connect, cv2.CV_32S)
+        save_step_time("Connected components", start, timing_results, image_id)
+    
+    # Save connected components visualization
+    if save_debug_images:
+        # Create a color-coded visualization of connected components
+        num_labels = connected_comp[0]
+        labels_img = connected_comp[1]
+        # Normalize labels for visualization
+        if num_labels > 1:
+            labels_normalized = (labels_img * (255 / (num_labels - 1))).astype(np.uint8)
+        else:
+            labels_normalized = labels_img.astype(np.uint8)
+        cv2.imwrite(f"{debug_output_folder}/image_{image_id}_step9_connected_components.png", labels_normalized)
+        print(f"Saved morphological debug images for image {image_id} to {debug_output_folder}/")
+    
+    # Add end time and final statistics
+    timing_results["end_time"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    timing_results["total_time"] = sum(timing_results["steps"].values())
+    timing_results["n_components"] = connected_comp[0]  # Store number of components found
+    
+    # Update final results
+    all_timing_results["image_results"][f"image_{image_id}"] = timing_results
+    
+    # Calculate overall statistics if multiple images have been processed
+    if len(all_timing_results["image_results"]) > 1:
+        all_timing_results["statistics"] = calculate_timing_statistics(all_timing_results["image_results"])
+    
+    # Save final results
+    with open(output_file, 'w') as f:
+        json.dump(all_timing_results, f, indent=4)
+    
+    # Print final summary for this image
+    print(f"\n{'='*50}")
+    print(f"FINAL TIMING SUMMARY FOR IMAGE {image_id}:")
+    print(f"{'='*50}")
+    for step, duration in timing_results["steps"].items():
+        print(f"{step:30s}: {duration:8.4f} seconds ({timing_results['step_percentages'][step]:5.1f}%)")
+    print(f"{'-'*50}")
+    print(f"Total processing time: {timing_results['total_time']:.4f} seconds")
+    print(f"Number of components: {timing_results['n_components']}")
+    print(f"{'='*50}\n")
+    
+    return connected_comp
+
+def calculate_timing_statistics(image_results):
+    """Calculate statistics across all processed images"""
+    all_times = defaultdict(list)
+    total_times = []
+    
+    # Collect all times for each step
+    for image_data in image_results.values():
+        for step, time in image_data["steps"].items():
+            all_times[step].append(time)
+        total_times.append(image_data["total_time_so_far"])
+    
+    # Calculate statistics
+    statistics = {
+        "per_step": {
+            step: {
+                "mean": float(np.mean(times)),
+                "std": float(np.std(times)),
+                "min": float(np.min(times)),
+                "max": float(np.max(times)),
+                "median": float(np.median(times))
+            }
+            for step, times in all_times.items()
+        },
+        "total_time": {
+            "mean": float(np.mean(total_times)),
+            "std": float(np.std(total_times)),
+            "min": float(np.min(total_times)),
+            "max": float(np.max(total_times)),
+            "median": float(np.median(total_times))
+        }
+    }
+    
+    return statistics
+
+def process_manual_mask(mask_path, connect=2):
+    """
+    Process a manual segmented mask directly without morphological operations.
+    
+    Args:
+        mask_path: Path to the mask file (TIFF format)
+        connect: Connectivity parameter for connected components
+    
+    Returns:
+        Connected components result (num_labels, labels, stats, centroids)
+    """
+    print(f"Loading manual mask from: {mask_path}")
+    
+    # Load the mask file
+    mask = tiff.imread(mask_path)
+    
+    # Ensure mask is 2D and uint8
+    if mask.ndim > 2:
+        mask = np.squeeze(mask)
+    if mask.dtype != np.uint8:
+        # Normalize to 0-255 range
+        mask = cv2.normalize(mask, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+    
+    # Ensure the mask is binary
+    mask = np.ascontiguousarray(mask)
+    
+    # Run connected components directly
+    connected_comp = cv2.connectedComponentsWithStats(mask, connect, cv2.CV_32S)
+    
+    print(f"Connected components analysis completed. Found {connected_comp[0]} components")
+    
+    return connected_comp
+
+def load_manual_masks(manual_masks_dir, num_images):
+    """
+    Load manual masks from a directory.
+    
+    Args:
+        manual_masks_dir: Path to directory containing manual mask files
+        num_images: Expected number of images
+    
+    Returns:
+        List of mask file paths sorted by name
+    """
+    mask_dir = Path(manual_masks_dir)
+    if not mask_dir.is_dir():
+        raise ValueError(f"Manual masks directory not found: {manual_masks_dir}")
+    
+    # Find all mask files (TIFF format)
+    mask_files = sorted(mask_dir.glob("*.tif*"))
+    
+    if len(mask_files) != num_images:
+        print(f"WARNING: Found {len(mask_files)} mask files but expected {num_images} images")
+    
+    print(f"Loaded {len(mask_files)} manual mask files from {manual_masks_dir}")
+    
+    return [str(f) for f in mask_files]
 
 def main(
     num_tissue: int,
@@ -41,7 +584,10 @@ def main(
     input_path: str,
     file_basename: str,
     optimize: bool,
-    crop_only: bool
+    crop_only: bool,
+    n_processes: int,
+    manual_masks_dir: str = None,
+    save_stacked_only: bool = False,
 ):
 
     start_begin = time.monotonic()
@@ -67,6 +613,7 @@ def main(
     # local
     # img_dir = Path('raw_data/IMGS')
 
+    # 
     with open(input_path._str + '/channelnames.txt', 'r') as file:
         channelnames = [line.strip() for line in file]
 
@@ -79,9 +626,11 @@ def main(
     # padding = 20
     # connect = 2
 
-    # pixel_size = [0.5073519424785282, 0.5073519424785282] #microns
+    # physical_pixel_sizes = [0.5073519424785282 * reg.um, 0.5073519424785282 * reg.um] #microns
 
-    physical_pixel_sizes_per_image: list[dict[str, Quantity]] = [get_converted_physical_size(image) for image in img_list]
+    physical_pixel_sizes_per_image: list[dict[str, Quantity]] = [{'X': 0.5073519424785282 * reg.um, 'Y': 0.5073519424785282 * reg.um} for image in img_list]
+
+    # physical_pixel_sizes_per_image: list[dict[str, Quantity]] = [get_converted_physical_size(image) for image in img_list]
     # Read physical pixel size for all images, find unique sizes for each dimension
     unique_sizes_by_dimension = defaultdict(set)
     for img_physical_pixel_size in physical_pixel_sizes_per_image:
@@ -92,12 +641,17 @@ def main(
         if (count := len(sizes)) != 1:
             raise ValueError(f'Found {count} sizes for dimension {dimension}, needed 1')
     physical_pixel_sizes = {dimension: next(iter(sizes)) for dimension, sizes in unique_sizes_by_dimension.items()}
+    # physical_pixel_sizes = {dimension: next(iter(sizes)) for dimension, sizes in physical_pixel_sizes}
 
     scale_factor_x = int(DESIRED_PHYSICAL_PIXEL_SIZE / physical_pixel_sizes['X'])
     scale_factor_y = int(DESIRED_PHYSICAL_PIXEL_SIZE / physical_pixel_sizes['Y'])
 
+    # scale_factor_x = int(DESIRED_PHYSICAL_PIXEL_SIZE / physical_pixel_sizes[0])
+    # scale_factor_y = int(DESIRED_PHYSICAL_PIXEL_SIZE / physical_pixel_sizes[1])
+
     pps_kwargs = {}
     for dimension in 'XY':
+        # pps_kwargs[dimension] = physical_pixel_sizes[dimension].magnitude
         pps_kwargs[dimension] = physical_pixel_sizes[dimension].magnitude
     if 'Z' not in physical_pixel_sizes:
         # Happens with single-image PhenoCycler when this code is used
@@ -109,6 +663,9 @@ def main(
     pps = types.PhysicalPixelSizes(**pps_kwargs)
     ###########################
 
+    if n_processes is None:
+        n_processes = mp.cpu_count()
+
     print('Starting...Read images')
     #time the process
     start = time.monotonic()
@@ -118,14 +675,47 @@ def main(
     # for img_path in img_list_sorted:
     #     img_list.append(tiff.TiffFile(img_path))
 
+    # print(scale_factor_x)
+    # print(scale_factor_y)
+
     img_arr = []
-    for img in img_list:
-        img_arr.append(img.series[0].levels[level].asarray())
+    # file_path = Path("/hive/users/tedz/SectionAligner/SectionAligner/new_dataset/downsizedimgs_compressed.npz")
+    file_path = Path(img_dir / 'downsizedimgs_compressed.npz')
+    load_params = [(img, scale_factor_x, scale_factor_y) for img in img_list]
+    if file_path.exists(): 
+        img_arr = np.load(file_path)
+        img_arr = [
+            img_arr[key] if img_arr[key].ndim == 2 
+            else img_arr[key].squeeze() 
+            for key in img_arr.files
+        ]
+
+
+    else:
+
+        # with ProcessPoolExecutor(max_workers=n_processes) as executor:
+        #     img_arr = list(executor.map(parallel_load_and_reduce, load_params))
+
+
+        for i, img in enumerate(img_list):
+            # img_2D = measure.block_reduce(img, (img.shape[0], scale_factor_x,scale_factor_y))
+            img_a = img.asarray()
+            img_arr.append(measure.block_reduce(img_a, block_size=(img_a.shape[0], scale_factor_x, scale_factor_y), func=np.sum))
+            # print(f"Data type: {img_arr[i].dtype}")
+            # print(f"Value range: {img_arr[0].min()} to {img_arr[0].max()}")
+            print('Finished ' + str(i))
+
+        # saving img_arr
+        np.savez_compressed(file_path, *img_arr)
+
+
+    # img_arr.append(img.series[0].levels[level].asarray())
 
     #downsample images - can replace orgining with this if we want to conserve memory
-    img_arr_downsample = [transform.downscale_local_mean(img, (1, scale_factor_x,scale_factor_y)) for img in img_arr]
+    # img_arr_downsample = [transform.downscale_local_mean(img, (1, scale_factor_x,scale_factor_y)) for img in img_arr]
+    # img_arr_downsample = [measure.block_reduce(img, (img.shape[0], scale_factor_x,scale_factor_y)) for img in img_arr]
 
-    img_2D = sum_channels(img_arr_downsample)
+    # img_2D = sum_channels(img_arr_downsample)
 
     # img_2D = sum_channels(img_arr)
     print('Time to read images + Downsampling + Summing all channels:', time.monotonic() - start)
@@ -135,70 +725,33 @@ def main(
     print('Preprocessing images...Thresholding, Downsample, Closing, Filling Holes, Erosion, Dilation, Connected Components')
     # time the process
     start = time.monotonic()
-    # otsu for threshold for automation
-    if thresh == None:
-        # thresh = [cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[0] for img in img_2D]
-        thresh = [threshold_multiotsu(img, classes=3)[0] / 2 for img in img_2D]
-    else:
-        thresh = [thresh for _ in img_2D]
 
-    #downsample images
-    # img_2D_downsample = [transform.downscale_local_mean(img, (scale_factor,scale_factor)) for img in img_2D]
+    # connected_comp_imgs = process_images_with_parallel_timing(
+    #     img_arr, thresh, kernel_size, connect, n_processes=n_processes
+    # )
 
-
-
-
-    # convert to binary image by thresholding > 0
-    binary_imgs = [img > thresh[i] for i, img in enumerate(img_2D)]
-    # binary_imgs = [img > thresh[i] for i, img in enumerate(img_2D_downsample)]
-    binary_imgs = [(img * 255).astype(np.uint8) for img in binary_imgs]
-
-    # plot_img_from_list(binary_imgs)
-
-    # close images
-    closed_imgs = [morphological_operation(img, kernel_size, 'closing') for img in binary_imgs]
-
-    #erosion to prevent connected components from merging
-    eroded_imgs = [morphological_operation(img, kernel_size, 'erosion') for img in closed_imgs]
-
-    # Dilate the image
-    dilated_imgs = [morphological_operation(img, int(kernel_size/10), 'dilation', its=2) for img in eroded_imgs]
-
-    # Erode the dilated image
-    eroded_imgs_2 = [morphological_operation(img, int(kernel_size/10), 'erode', its=2) for img in dilated_imgs]
-
-    # filled_imgs = [morphology.remove_small_holes(img, area_threshold=holes_thresh) for img in eroded_imgs]
-    # filled_imgs = [(img * 255).astype(np.uint8) for img in filled_imgs]
-    # filled_imgs = [morphology.remove_small_holes(img, area_threshold=holes_thresh*2) for img in closed_imgs]
-    # filled_imgs = [(img * 255).astype(np.uint8) for img in filled_imgs]
-
-    # dilate image then close
-    # dilated_imgs_2 = [morphological_operation(img, kernel_size, 'dilation') for img in eroded_imgs]
-    # closed_imgs_2 = [morphological_operation(img, kernel_size, 'closing') for img in dilated_imgs_2]
-
-    # image opening
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(int(kernel_size * 0.3), int(kernel_size * 0.3)))
-    opened_imgs = [cv2.morphologyEx(img, cv2.MORPH_OPEN, kernel) for img in eroded_imgs_2]
-
-    # dilate image then close
-    # dilated_imgs_2 = [morphological_operation(img, 0, 'dilation') for img in opened_imgs]
-    # eroded_imgs_3 = [morphological_operation(img, 0, 'erosion') for img in dilated_imgs_2]
-    # dilated_imgs_3 = [morphological_operation(img, 0, 'dilation') for img in eroded_imgs_3]
-    closed_imgs_2 = [morphological_operation(img, int(kernel_size * 2), 'closing') for img in opened_imgs]
-
-    # remove holes again
-    # filled_imgs_2 = [morphology.remove_small_holes(img, area_threshold=holes_thresh) for img in closed_imgs_2]
-    # filled_imgs_2 = [(img * 255).astype(np.uint8) for img in filled_imgs_2]
-
-    # # erode image to remove connected tissues that may have formed
-    # eroded_imgs_3 = [morphological_operation(img, int(kernel_size / 10), 'erosion', its=2) for img in closed_imgs_2]
-
-    # # # dilate image back
-    processed_imgs = [morphological_operation(img, kernel_size, 'dilation') for img in closed_imgs_2]
-    # dilated_imgs_3 = [morphological_operation(img, int(kernel_size / 10), 'dilation', its=2) for img in eroded_imgs_3]
-
-    ##################################################################################################################
-    connected_comp_imgs = [cv2.connectedComponentsWithStats(img, connect, cv2.CV_32S) for img in processed_imgs]
+    connected_comp_imgs = []
+    debug_folder = f"{output_folder}/morphology_debug"
+    
+    # Load manual masks if provided
+    manual_mask_files = None
+    if manual_masks_dir:
+        manual_mask_files = load_manual_masks(manual_masks_dir, len(img_arr))
+    
+    for i, image in enumerate(img_arr):
+        print(f"\nProcessing image {i+1}/{len(img_arr)}")
+        
+        # Use manual mask if provided, otherwise use automatic morphological processing
+        if manual_mask_files and i < len(manual_mask_files):
+            print(f"Using manual mask for image {i+1}")
+            result = process_manual_mask(manual_mask_files[i], connect)
+        else:
+            result = process_single_image(
+                image, i+1, thresh, kernel_size, connect,
+                save_debug_images=True, debug_output_folder=debug_folder,
+                use_watershed=True  # Set to False to disable watershed segmentation
+            )
+        connected_comp_imgs.append(result)
 
     print('Time to Preprocess images:', time.monotonic() - start)
 
@@ -229,7 +782,7 @@ def main(
 
 
     # crop images
-    cropped_imgs = crop_imgs(img_arr, tissue_bbox, centroid_slices, padding, iso_imgs, align_upsample_factor, scale_factor_x, scale_factor_y, thresh, kernel_size, scale=True)
+    cropped_imgs = crop_imgs(img_arr, load_params,tissue_bbox, centroid_slices, padding, iso_imgs, align_upsample_factor, scale_factor_x, scale_factor_y, thresh, kernel_size, scale=True, manual_masks_dir=manual_masks_dir)
     # cropped_imgs = crop_imgs([img_arr[4]], tissue_bbox, [centroid_slices[4]], scale_factor, padding, [filtered_imgs[4]])
     if crop_only:
         for i, img in enumerate(img_list):
@@ -254,6 +807,19 @@ def main(
     stacked_imgs = stack_images(cropped_imgs)
     print('Time to Crop images and stack:', time.monotonic() - start)
 
+    # Save stacked images and exit if requested
+    if save_stacked_only:
+        print('Saving stacked images...')
+        for i, img in enumerate(stacked_imgs):
+            OmeTiffWriter.save(
+                img,
+                f"{output_folder}/{file_basename}_{i}_stacked.ome.tif",
+                dim_order="ZCYX",
+                channel_names=channelnames,
+                physical_pixel_sizes=pps,
+            )
+        print('Stacked images saved. Exiting.')
+        exit()
 
     print('Aligning images...')
     # time the process
@@ -346,8 +912,6 @@ def main(
 #         channel_names=channelnames,
 #         physical_pixel_sizes=pps,
 # )
-
-
 
 def align_z_slices(summed_channel, image_4d, reference_z=0, align_channel=0, params=None):
     """
@@ -764,7 +1328,7 @@ def upsample_image(image, sfx, sfy):
 
     return upsampled_image
 
-def crop_imgs(imgs, bbox, centroids, padding, filtered_imgs, upsample_factor, sfx, sfy, thresh, kernel_size=10, scale=True):
+def crop_imgs(imgs, load_params, bbox, centroids, padding, filtered_imgs, upsample_factor, sfx, sfy, thresh, kernel_size=10, scale=True, manual_masks_dir=None):
 
     cropped_slices = []
 
@@ -802,14 +1366,17 @@ def crop_imgs(imgs, bbox, centroids, padding, filtered_imgs, upsample_factor, sf
             upsampled_mask = (upsampled_mask > 0).astype(np.uint8) #convert to [0, 1]
 
             #crop image and mask first to save memory
-            new_img = img[:, y1:y2, x1:x2]
+            new_img = load_params[i][0].asarray()[:, y1:y2, x1:x2]
             upsampled_mask = upsampled_mask[y1:y2, x1:x2]
 
             # new_cX = abs(x1 - x2) / 2
             # new_cY = abs(y1 - y2) / 2
 
-            #create new mask
-            mask = process_tissue(new_img, thresh[i], kernel_size, upsampled_mask, connect=2)
+            #create new mask only if it's not manual mask
+            if manual_masks_dir is None:
+                mask = process_tissue(new_img, thresh[i], kernel_size, upsampled_mask, connect=2)
+            else:
+                mask = upsampled_mask
 
 
             #apply mask to original image
@@ -920,19 +1487,26 @@ def create_bounding_box(cX, cY, width, height, img, padding, sfx, sfy, scale=Tru
         # Adjust if bounding box goes beyond image boundaries (assuming image dimensions are known)
         x1 = max(x1, 0) * sfx
         y1 = max(y1, 0) * sfy
-        x2 = min(x2, img.shape[2]) * sfx
-        y2 = min(y2, img.shape[1]) * sfy
+        x2 = min(x2, img.shape[1]) * sfx
+        y2 = min(y2, img.shape[0]) * sfy
+
+        #create padding
+        x1 = max(x1 - padding, 0)
+        y1 = max(y1 - padding, 0)
+        x2 = min(x2 + padding, img.shape[1] * sfx)
+        y2 = min(y2 + padding, img.shape[0] * sfy)
+
     else:
         x1 = max(x1, 0)
         y1 = max(y1, 0)
-        x2 = min(x2, img.shape[2])
-        y2 = min(y2, img.shape[1])
+        x2 = min(x2, img.shape[1])
+        y2 = min(y2, img.shape[0])
 
-    #create padding
-    x1 = max(x1 - padding, 0)
-    y1 = max(y1 - padding, 0)
-    x2 = min(x2 + padding, img.shape[2])
-    y2 = min(y2 + padding, img.shape[1])
+        #create padding
+        x1 = max(x1 - padding, 0)
+        y1 = max(y1 - padding, 0)
+        x2 = min(x2 + padding, img.shape[1])
+        y2 = min(y2 + padding, img.shape[0])
 
     return x1, y1, x2, y2
 
@@ -1468,7 +2042,7 @@ def save_arrays_as_images(arrays, use_colormap=False, output_folder='figures', f
 if __name__ == "__main__":
 
     p = ArgumentParser()
-    p.add_argument('--num_tissue', type=int, default=8, help='Number of tissues to detect, default is 8')
+    p.add_argument('--num_tissue', type=int, default=1, help='Number of tissues to detect, default is 8')
     p.add_argument('--level', type=int, default=0, help='Pyrmaid level of the image, default is 0 which is the original image size')
     p.add_argument('--thresh', type=int, default=None, help='Threshold value for binarization, default is done by otsu')
     p.add_argument('--kernel_size', type=int, default=100, help='Size of the structuring element used for closing, default is 0')
@@ -1476,13 +2050,16 @@ if __name__ == "__main__":
     p.add_argument('--scale_factor', type=int, default=8, help='Scale factor for downsample, default is 8')
     p.add_argument('--padding', type=int, default=50, help='Padding for bounding box, default is 20')
     p.add_argument('--connect', type=int, default=2, help='Connectivity for connected components, default is 2')
-    p.add_argument('--output_dir', type=Path, default='./outputs', help='Output folder for saving images, default is outputs')
-    # p.add_argument('--input_path', type=str, default='/hive/hubmap/data/CMU_Tools_Testing_Group/phenocycler/20c4aa0d79c0b8af37f27d436c1b42c4/QPTIFF-test/3D_image_stack.ome.tiff', help='Input folder for reading images, default is inputs')
-    p.add_argument('--input_path', type=str, default='SectionAligner/raw_data', help='Input folder for reading images, default is inputs')
-    p.add_argument('--output_file_basename', type=str, default='aligned_tissue', help='Output file basename, default is aligned_tissue')
+    p.add_argument('--output_dir', type=Path, default='/hive/users/tedz/SectionAligner/SectionAligner/outputs_101325', help='Output folder for saving images, default is outputs')
+    p.add_argument('--input_path', type=str, default='/hive/users/tedz/SectionAligner/SectionAligner/new_raw_data', help='Input folder for reading images, default is inputs')
+    # p.add_argument('--input_path', type=str, default='new_dataset', help='Input folder for reading images, default is inputs')
+    p.add_argument('--output_file_basename', type=str, default='aligned_tissue_101325', help='Output file basename, default is aligned_tissue')
     p.add_argument('--align_upsample_factor', type=int, default=2, help='Upsample factor for aligning images, default is 2')
     p.add_argument('--optimize', type=bool, default=False, help="optimize alignment parameters using optuna")
     p.add_argument('--crop_only', type=bool, default=False, help="only identify tissues and crop, no alignment")
+    p.add_argument('--n_processes', type=int, default=1, help="number of cores to use for multiprocessing")
+    p.add_argument('--manual_masks_dir', type=str, default='/hive/users/tedz/SectionAligner/SectionAligner/new_raw_data/manual_masks', help="Directory containing manual segmented masks. When provided, skips morphological operations and uses masks for connected components analysis")
+    p.add_argument('--save_stacked_only', type=bool, default=True, help="Save the stacked images without summing channels and exit")
 
     args = p.parse_args()
 
@@ -1501,4 +2078,7 @@ if __name__ == "__main__":
         file_basename = args.output_file_basename,
         optimize= args.optimize,
         crop_only = args.crop_only,
+        n_processes = args.n_processes,
+        manual_masks_dir = args.manual_masks_dir,
+        save_stacked_only = args.save_stacked_only
     )

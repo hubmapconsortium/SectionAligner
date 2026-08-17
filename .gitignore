@@ -1,2 +1,49 @@
 .idea
-__pycache__
+.vscode/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
+
+# Local run configuration (copy config.example.yaml to config.yaml)
+config.yaml
+
+# Pipeline runs and stage outputs
+runs/
+output*/
+*_output/
+*_output_*/
+new_outputs/
+new_alignment_output/
+manual_mask_new_output/
+alignment_tile_*/
+tiles/
+IMC/
+IMC_tiles*/
+3DCODEX*/
+temp/
+temp_input/
+temp_output/
+tissue_pipeline/qc_test/
+
+# Raw and intermediate imaging data
+raw_data/
+new_raw_data/
+new_dataset/
+*.tif
+*.tiff
+*.qptiff
+*.npy
+*.tar.gz
+
+# External checkouts kept beside the repo
+bigstream/
+
+# Logs, job output and scratch
+*.log
+*.out
+*.err
+slurm-*
+timing_results.json
+tiffinfo.txt
+db.sqlite3
