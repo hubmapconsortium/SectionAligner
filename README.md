@@ -48,6 +48,7 @@ SectionAligner/
   3Dtiler.py            stage 3: split a volume into overlapping 3D tiles
   3DCellComposer/       stage 4: 3D cell segmentation per tile (git submodule)
   3Dstitcher.py         stage 5: stitch per-tile masks into one volume
+  qc/                   debug and QC tools, run by hand outside a pipeline run
   main.py               standalone single-image tissue detection + alignment
 ```
 
@@ -168,6 +169,44 @@ reads the same list stage 1 does — `channelnames.txt` or `MarkerList.txt` in
   node); tune SLURM memory/time in `config.yaml` for your cluster.
 - **Partitions/envs** in `config.example.yaml` are example values for one
   cluster; change them to match yours.
+
+## QC and debugging
+
+These are run by hand against a finished run, not as pipeline stages.
+
+**Stitch seams.** The hardest thing to judge in stage 5 is whether two labels on
+either side of a tile overlap are one cell or two.
+`qc/debug_stitch_edge_merges.py` reads the per-tile masks *before* stitching and,
+for every overlapping tile pair, reports label-pair IoU, coverage and centroid
+distance — the evidence a merge decision rests on. Pass it the gathered masks and
+the tiling metadata, optionally with the stitched result and its
+`_contributions.tif` sidecar to summarise what stitching actually did:
+
+```bash
+python qc/debug_stitch_edge_merges.py \
+    work_dir/04_segmentation/tissue_1/masks/3D_cell_mask \
+    work_dir/03_tiles/tissue_1/tile_metadata.json \
+    --output-dir stitch_edge_debug \
+    --stitched-mask work_dir/05_stitched/tissue_1/stitched_3D_cell_mask.tif
+
+python qc/plot_stitch_edge_merge_report.py \
+    stitch_edge_debug/edge_merge_report.json \
+    --output stitch_edge_debug/edge_merge_qc.html
+```
+
+The second script turns that JSON into an HTML report with per-seam figures; the
+first also writes red/green/yellow boundary overlays per seam unless you pass
+`--no-boundary-pngs`.
+
+**Stage 1 cropping.** `tissue_pipeline/validate_centered_tissue2.py` re-runs the
+centered-crop logic for a single tissue and writes to its own directory so the
+existing stack is untouched; `--plan-only` stops before writing the OME-TIFF. It
+reads the dataset from `$SECTIONALIGNER_DATA_ROOT` (defaulting to the original
+scratch directory).
+
+**Segmentation scoring** is not here: it is `evaluation/single_method_eval_3D.py`
+inside the 3DCellComposer submodule, which stage 4 runs unless you set
+`segment.skip_eval`.
 
 ## Standalone tissue detection and alignment (`main.py`)
 
