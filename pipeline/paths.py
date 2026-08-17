@@ -1,8 +1,10 @@
 """Where each stage's tool lives inside this repository.
 
-Every stage of the pipeline is vendored here, so a run needs no path outside
-the checkout: ``REPO_ROOT`` is derived from this file's own location, which
-means the pipeline works from any clone and any working directory.
+Every stage of the pipeline resolves inside the checkout, so a run needs no path
+outside it: ``REPO_ROOT`` is derived from this file's own location, which means
+the pipeline works from any clone and any working directory. Stage 4 arrives as
+a git submodule rather than committed files, so it is the one tool that can be
+absent from an otherwise complete checkout.
 
 Each stage has a *script* (what gets run) and a *dir* (the working directory it
 runs in).  The two differ for tools that import their own sibling modules --
@@ -44,6 +46,10 @@ STAGE_SCRIPTS = {
     4: SEGMENT_SCRIPT,
     5: STITCH_SCRIPT,
 }
+
+# Stages whose tool is a git submodule: missing files mean an uninitialised
+# submodule, which needs a different fix than a broken checkout.
+SUBMODULE_STAGES = {4: SEGMENT_DIR}
 
 # Channel names are read from the raw input directory, in the same order stage 1
 # looks for them, so stages 1 and 4 always agree on the marker list.

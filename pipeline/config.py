@@ -214,9 +214,16 @@ def validate_config(cfg: PipelineConfig, stages: list[int]) -> list[str]:
     for stage in stages:
         script = paths.STAGE_SCRIPTS.get(stage)
         if script and not os.path.isfile(script):
-            problems.append(
-                f"stage {stage}: tool missing from this repository: {script}"
-            )
+            submodule = paths.SUBMODULE_STAGES.get(stage)
+            if submodule:
+                problems.append(
+                    f"stage {stage}: the {os.path.basename(submodule)} submodule is "
+                    "not checked out. Run: git submodule update --init --recursive"
+                )
+            else:
+                problems.append(
+                    f"stage {stage}: tool missing from this repository: {script}"
+                )
 
     if 1 in stages:
         if not cfg.input_dir:

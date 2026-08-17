@@ -46,17 +46,37 @@ SectionAligner/
   tissue_pipeline/      stage 1: tissue matching, stacking and cropping
   zalign/               stage 2: z-slice registration (rigid + optical flow)
   3Dtiler.py            stage 3: split a volume into overlapping 3D tiles
-  3DCellComposer/       stage 4: 3D cell segmentation per tile
+  3DCellComposer/       stage 4: 3D cell segmentation per tile (git submodule)
   3Dstitcher.py         stage 5: stitch per-tile masks into one volume
   main.py               standalone single-image tissue detection + alignment
 ```
 
-Stages 2 and 4 were previously separate checkouts and are now vendored here:
-`zalign/` holds the DeepCell-era alignment scripts, and `3DCellComposer/` is the
-`murphygroup/3DCellComposer` source with our local modifications applied. Update
-them in place; there is no external path to keep in sync.
+Stages 2 and 4 were previously separate checkouts. `zalign/` holds the
+DeepCell-era alignment scripts and is committed here directly. `3DCellComposer/`
+is a submodule pinned to the `sectionaligner-pipeline` branch of
+`hubmapconsortium/3DCellComposer`, which carries the changes this pipeline
+depends on — most importantly `--channel_names`, which upstream does not have.
+
+To change stage 4, commit inside the submodule, push that branch, then commit
+the moved pointer in this repo:
+
+```bash
+cd 3DCellComposer
+git commit -am "..." && git push
+cd .. && git add 3DCellComposer && git commit -m "bump 3DCellComposer"
+```
+
+`git submodule update --remote 3DCellComposer` pulls the latest tip of that
+branch when someone else has moved it.
 
 ## Quick start
+
+Stage 4 is a submodule, so clone with `--recurse-submodules` (or run
+`git submodule update --init --recursive` in an existing clone):
+
+```bash
+git clone --recurse-submodules git@github.com:murphygroup/SectionAligner.git
+```
 
 ```bash
 conda activate <env with PyYAML>      # the orchestrator needs nothing else
